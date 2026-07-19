@@ -5,6 +5,7 @@ import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser } from './types';
 import Login from './components/Login';
 import WeekOverview from './planner/WeekOverview';
+import CreateShiftForm from './planner/CreateShiftForm';
 
 interface CreateTarget { pharmacyId: string; dateISO: string; }
 
@@ -83,18 +84,16 @@ export default function App() {
         refreshSignal={refreshSignal}
       />
 
-      {/* Stap C vervangt deze placeholder door het echte aanmaakformulier. */}
       {createTarget && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4" onClick={() => setCreateTarget(null)}>
-          <div className="bg-white rounded-xl p-6 max-w-sm text-sm" onClick={(e) => e.stopPropagation()}>
-            <p className="font-semibold mb-1">Dienst aanmaken</p>
-            <p className="text-slate-600">
-              Apotheek <code>{createTarget.pharmacyId}</code> op {createTarget.dateISO}.
-              Het aanmaakformulier volgt in stap C.
-            </p>
-            <button onClick={() => setCreateTarget(null)} className="mt-4 text-slate-600 underline">Sluiten</button>
-          </div>
-        </div>
+        <CreateShiftForm
+          initialPharmacyId={createTarget.pharmacyId}
+          initialDateISO={createTarget.dateISO}
+          onClose={() => setCreateTarget(null)}
+          onCreated={() => {
+            setCreateTarget(null);
+            setRefreshSignal((n) => n + 1);
+          }}
+        />
       )}
     </div>
   );
