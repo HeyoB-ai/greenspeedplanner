@@ -3,9 +3,10 @@
 
 export type ShiftType = 'regular' | 'institution' | 'other_transport' | 'urgent';
 export type TransportMode = 'bike' | 'car';
-// status: nu functioneel enkel 'planned'; de rest is ruimte voor het latere
-// biedmodel (niet gebouwd). We laten het veld intact.
-export type ShiftStatus = 'planned' | 'offered' | 'claimed' | 'assigned';
+// 'draft'  = concept, alleen voor planners zichtbaar, nog niet bij de koerier.
+// 'planned' = bevestigd. offered/claimed/assigned zijn ruimte voor het latere
+// biedmodel (niet gebouwd). We laten die waarden intact.
+export type ShiftStatus = 'draft' | 'planned' | 'offered' | 'claimed' | 'assigned';
 
 // DB-rollen zijn lowercase (zie user_profiles.role in migratie 001).
 export type DbRole = 'superuser' | 'supervisor' | 'admin' | 'pharmacy' | 'courier';

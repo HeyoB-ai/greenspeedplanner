@@ -1,4 +1,4 @@
-import { ArrowLeft, Bike, Car, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
+import { ArrowLeft, Bike, Car, CheckCircle2, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
 import { Shift } from '../types';
 import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG } from './constants';
 
@@ -10,10 +10,11 @@ interface Props {
   onBack: () => void;
   onEdit: (shift: Shift) => void;
   onDelete: (shift: Shift) => void;
+  onConfirm: (shift: Shift) => void;
 }
 
 // Ingezoomde dagweergave met meer detail per dienst.
-export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete }: Props) {
+export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm }: Props) {
   const dow = (date.getDay() + 6) % 7;
   const heading = `${WEEKDAY_LABELS_LONG[dow]} ${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}`;
 
@@ -34,12 +35,18 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
           const isOpen = !s.courierId;
           const TransportIcon = s.transportMode === 'car' ? Car : Bike;
           const time = s.budgetedEndTime ? `${s.startTime}–${s.budgetedEndTime}` : s.startTime;
+          const isDraft = s.status === 'draft';
           return (
-            <div key={s.id} className={`rounded-lg border ${style.border} bg-white p-3`}>
+            <div key={s.id} className={`rounded-lg border ${style.border} bg-white p-3 ${isDraft ? 'border-dashed' : ''}`}>
               <div className="flex items-center justify-between">
                 <span className={`inline-flex items-center gap-2 text-sm font-semibold ${style.text}`}>
                   <span className={`inline-block w-2.5 h-2.5 rounded-full ${style.swatch}`} />
                   {style.label}
+                  {isDraft && (
+                    <span className="rounded bg-slate-500/80 text-white text-[10px] font-semibold px-1.5 py-0.5">
+                      Concept
+                    </span>
+                  )}
                 </span>
                 <span className="text-sm font-semibold tabular-nums">{time}</span>
               </div>
@@ -79,6 +86,14 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
               )}
 
               <div className="mt-3 flex justify-end gap-2 border-t border-slate-100 pt-2">
+                {isDraft && (
+                  <button
+                    type="button" onClick={() => onConfirm(s)}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-green-700 hover:text-green-800 mr-auto"
+                  >
+                    <CheckCircle2 size={14} /> Bevestigen
+                  </button>
+                )}
                 <button
                   type="button" onClick={() => onEdit(s)}
                   className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"

@@ -1,7 +1,8 @@
 -- ════════════════════════════════════════════════════════════════════════
--- Greenspeed Planner — tijdregistratie per dienst — migratie 005
+-- Greenspeed Planner — tijdregistratie per dienst — migratie 006
 -- ════════════════════════════════════════════════════════════════════════
 -- Uitvoeren in de Supabase SQL Editor van de gedeelde Greenspeed-database.
+-- Draai migratie 005 (concept-status) eerst.
 -- Volgt de conventies van migratie 001: TEXT + CHECK, IF NOT EXISTS, expliciete
 -- RLS, hergebruik van is_privileged().
 --
@@ -92,6 +93,7 @@ CREATE POLICY "str_select" ON public.shift_time_reports
       SELECT 1 FROM public.shifts s
       WHERE s.id = shift_time_reports.shift_id
         AND s.courier_id = auth.uid()
+        AND s.status <> 'draft'
     )
   );
 
@@ -114,6 +116,7 @@ CREATE POLICY "str_update" ON public.shift_time_reports
         SELECT 1 FROM public.shifts s
         WHERE s.id = shift_time_reports.shift_id
           AND s.courier_id = auth.uid()
+          AND s.status <> 'draft'
       )
       AND status <> 'approved'
     )
@@ -125,6 +128,7 @@ CREATE POLICY "str_update" ON public.shift_time_reports
         SELECT 1 FROM public.shifts s
         WHERE s.id = shift_time_reports.shift_id
           AND s.courier_id = auth.uid()
+          AND s.status <> 'draft'
       )
       AND status <> 'approved'
     )

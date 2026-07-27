@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { Courier, Pharmacy, Shift } from '../types';
-import { getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
+import { confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
 import {
   addDays, formatDayHeader, isoWeekNumber, startOfWeek, toISODate, weekDays,
 } from './dates';
@@ -20,11 +20,14 @@ interface Props {
   // refreshSignal beheert. Zo blijft alle weekdata (shifts, namen) hier lokaal.
   onEdit: (shift: Shift) => void;
   onDelete: (shift: Shift) => void;
-  // Verhoog dit getal na een succesvolle aanmaak/wijziging/verwijdering → herlaadt de week.
+  // Bevestigen (concept → planned) handelen we hier lokaal af, want alle
+  // weekdata zit hier. Na afloop trigger deze callback het refreshSignal in App.
+  onChanged: () => void;
+  // Verhoog dit getal na een succesvolle mutatie → herlaadt de week.
   refreshSignal: number;
 }
 
-export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal }: Props) {
+export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, refreshSignal }: Props) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
@@ -36,7 +39,10 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
   const [pharmacyFilter, setPharmacyFilter] = useState('');
   const [courierFilter, setCourierFilter] = useState<CourierFilter>('all');
   const [onlyWithShifts, setOnlyWithShifts] = useState(false);
+  const [onlyDrafts, setOnlyDrafts] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const days = useMemo(() => weekDays(weekStart), [weekStart]);
   const weekStartISO = toISODate(weekStart);
@@ -74,11 +80,14 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
     return s.courierId === courierFilter;
   };
 
+  const passesFilters = (s: Shift): boolean =>
+    passesCourierFilter(s) && (!onlyDrafts || s.status === 'draft');
+
   // shiftsByPharmacyDay[pharmacyId][dateISO] = Shift[]
   const grid = useMemo(() => {
     const map = new Map<string, Map<string, Shift[]>>();
     for (const s of shifts) {
-      if (!passesCourierFilter(s)) continue;
+      if (!passesFilters(s)) continue;
       for (const pid of s.pharmacyIds) {
         if (!map.has(pid)) map.set(pid, new Map());
         const byDay = map.get(pid)!;
@@ -88,7 +97,25 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
       }
     }
     return map;
-  }, [shifts, courierFilter]);
+  }, [shifts, courierFilter, onlyDrafts]);
+
+  // Onbevestigde diensten in de zichtbare week (los van de cel-filters).
+  const weekDrafts = useMemo(() => shifts.filter((s) => s.status === 'draft'), [shifts]);
+
+  async function handleConfirm(ids: string[]) {
+    if (ids.length === 0) return;
+    setConfirmBusy(true);
+    setError('');
+    try {
+      await confirmShifts(ids);
+      onChanged();
+    } catch (e: any) {
+      setError(e?.message ?? 'Bevestigen mislukt.');
+    } finally {
+      setConfirmBusy(false);
+      setShowBulkConfirm(false);
+    }
+  }
 
   const pharmacyName = useMemo(
     () => new Map(pharmacies.map((p) => [p.id, p.name])),
@@ -104,7 +131,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
 
   if (selectedDay) {
     const dayISO = toISODate(selectedDay);
-    const dayShifts = shifts.filter((s) => s.shiftDate === dayISO && passesCourierFilter(s));
+    const dayShifts = shifts.filter((s) => s.shiftDate === dayISO && passesFilters(s));
     return (
       <DayView
         date={selectedDay}
@@ -114,6 +141,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
         onBack={() => setSelectedDay(null)}
         onEdit={onEdit}
         onDelete={onDelete}
+        onConfirm={(s) => handleConfirm([s.id])}
       />
     );
   }
@@ -146,6 +174,20 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
         >
           Deze week
         </button>
+
+        {/* Concept-teller + bulk bevestigen (zichtbare week) */}
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-sm text-slate-500">
+            {weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'} onbevestigd
+          </span>
+          <button
+            onClick={() => setShowBulkConfirm(true)}
+            disabled={weekDrafts.length === 0}
+            className="inline-flex items-center gap-1 text-sm rounded-lg border border-green-600 text-green-700 px-2.5 py-1 hover:bg-green-50 disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <CheckCircle2 size={15} /> Bevestig concepten
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -174,6 +216,10 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
         <label className="flex items-center gap-1.5 cursor-pointer">
           <input type="checkbox" checked={onlyWithShifts} onChange={(e) => setOnlyWithShifts(e.target.checked)} />
           <span>Alleen apotheken met diensten deze week</span>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={onlyDrafts} onChange={(e) => setOnlyDrafts(e.target.checked)} />
+          <span>Alleen concepten</span>
         </label>
       </div>
 
@@ -263,6 +309,41 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal
           </tbody>
         </table>
       </div>
+
+      {/* Bulk-bevestiging van alle concepten in de zichtbare week */}
+      {showBulkConfirm && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !confirmBusy && setShowBulkConfirm(false)}
+        >
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-green-700">
+              <CheckCircle2 size={18} />
+              <h2 className="font-semibold">Concepten bevestigen</h2>
+            </div>
+            <p className="text-sm text-slate-600">
+              Je staat op het punt <strong>{weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'}</strong> in
+              deze week te bevestigen. Ze worden daarna zichtbaar voor de koeriers. Dit kan niet worden teruggedraaid.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button" disabled={confirmBusy}
+                onClick={() => setShowBulkConfirm(false)}
+                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900 disabled:opacity-60"
+              >
+                Annuleren
+              </button>
+              <button
+                type="button" disabled={confirmBusy}
+                onClick={() => handleConfirm(weekDrafts.map((s) => s.id))}
+                className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
+              >
+                {confirmBusy ? 'Bevestigen…' : `Bevestig ${weekDrafts.length}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

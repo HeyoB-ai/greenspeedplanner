@@ -27,7 +27,8 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `002_tighten_rls_quickwins.sql` | RLS-opschoning `pharmacy_codes` / `groups` |
 | `003_transport_mode.sql` | `shifts.transport_mode` (bike/car) |
 | `004_pharmacy_coords.sql` | `pharmacies."addressLat"/"addressLng"` |
-| `005_shift_time_reports.sql` | `shift_time_reports` + RLS/trigger + `shifts.car_is_own` |
+| `005_draft_status.sql` | concept-status `draft` op `shifts` + RLS-afdichting |
+| `006_shift_time_reports.sql` | `shift_time_reports` + RLS/trigger + `shifts.car_is_own` |
 
 ## Scripts
 
@@ -58,7 +59,8 @@ Draait het rekenmodel (`src/timesheet/computeShiftTime.ts`, puur) over de
 afgeronde diensten en rapporteert de verdeling: hoeveel voorstellen, hoeveel
 `disputed` en waarom, berekende duur t.o.v. `budgeted_end_time`, de spreiding van
 de terugreistijd en de measured-vs-national snelheidsbron. IJkstap vóór er mail
-uitgaat. Draai 004 + het geocode-backfill + 005 eerst.
+uitgaat. Draai 004 + het geocode-backfill + 005 (concept) + 006 eerst.
+Concept-diensten ('draft') worden nooit meegenomen.
 
 ```powershell
 $env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"

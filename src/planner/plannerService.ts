@@ -129,7 +129,8 @@ export async function createShift(input: NewShiftInput): Promise<string> {
       start_time: input.startTime,
       budgeted_end_time: input.budgetedEndTime,
       transport_mode: input.transportMode,
-      // status niet meegegeven → DB-default 'planned'
+      // status niet meegegeven → DB-default 'draft' (concept). Bevestigen tilt
+      // hem later naar 'planned'.
       description: input.description,
       created_by: session?.user.id ?? null,
     })
@@ -240,4 +241,24 @@ async function syncJunction(
       .insert(toAdd.map((id) => ({ shift_id: shiftId, [column]: id })));
     if (insErr) throw insErr;
   }
+}
+
+// ── Concept bevestigen ──────────────────────────────────────────────────────
+// 'draft' → 'planned' + wie/wanneer. Alleen rijen die nog concept zijn worden
+// geraakt (via .eq('status','draft')), zodat een dubbele klik of een al
+// bevestigde dienst niets kapotmaakt. Werkt voor één of meerdere diensten.
+export async function confirmShifts(shiftIds: string[]): Promise<void> {
+  const sb = requireClient();
+  if (shiftIds.length === 0) return;
+  const { data: { session } } = await sb.auth.getSession();
+  const { error } = await sb
+    .from('shifts')
+    .update({
+      status: 'planned',
+      confirmed_at: new Date().toISOString(),
+      confirmed_by: session?.user.id ?? null,
+    })
+    .in('id', shiftIds)
+    .eq('status', 'draft');
+  if (error) throw error;
 }

@@ -9,6 +9,7 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
   const style = TYPE_STYLES[shift.shiftType];
   const isOpen = !shift.courierId;
   const isShared = shift.pharmacyIds.length > 1;
+  const isDraft = shift.status === 'draft';
   const TransportIcon = shift.transportMode === 'car' ? Car : Bike;
 
   const time = shift.budgetedEndTime
@@ -19,14 +20,22 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
     <button
       type="button"
       onClick={onClick}
-      title={`${style.label}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}`}
+      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}`}
       className={[
         'w-full text-left rounded-md px-2 py-1 text-xs leading-tight',
         style.bg, style.text,
         'border', style.border,
-        isOpen ? 'border-dashed border-2' : '',
+        (isOpen || isDraft) ? 'border-dashed border-2' : '',
+        isDraft ? 'opacity-60' : '',
       ].join(' ')}
     >
+      {isDraft && (
+        <div className="mb-0.5">
+          <span className="inline-block rounded bg-slate-500/80 text-white text-[10px] font-semibold px-1 leading-tight">
+            Concept
+          </span>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-1">
         <span className="font-semibold tabular-nums">{time}</span>
         <span className="flex items-center gap-1 shrink-0">

@@ -108,6 +108,7 @@ export default function App() {
         onCreate={(pharmacyId, dateISO) => setFormTarget({ mode: 'create', pharmacyId, dateISO })}
         onEdit={(shift) => setFormTarget({ mode: 'edit', shift })}
         onDelete={(shift) => { setDeleteError(''); setDeletingShift(shift); }}
+        onChanged={() => setRefreshSignal((n) => n + 1)}
         refreshSignal={refreshSignal}
       />
 
