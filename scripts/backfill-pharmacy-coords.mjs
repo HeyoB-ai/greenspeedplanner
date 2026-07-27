@@ -110,7 +110,8 @@ async function main() {
   if (error) die('Ophalen apotheken mislukt: ' + error.message);
 
   console.log(`${pharmacies.length} apotheken zonder coördinaten.`);
-  const review = [];
+  const review = [];      // gemarkeerd/verdacht — NIET weggeschreven
+  const accepted = [];    // betrouwbaar — wél weggeschreven (voor steekproefcontrole)
   let written = 0;
 
   for (const p of pharmacies) {
@@ -150,12 +151,13 @@ async function main() {
       review.push({ id: p.id, name: p.name, address, reden: ['update mislukt: ' + updErr.message] });
     } else {
       written++;
+      accepted.push({ id: p.id, name: p.name, address, lat: g.lat, lng: g.lng });
       console.log(`✓ ${p.name} → ${g.lat}, ${g.lng}`);
     }
     await sleep(GEOCODE_DELAY_MS);
   }
 
-  writeFileSync(REVIEW_FILE, JSON.stringify(review, null, 2));
+  writeFileSync(REVIEW_FILE, JSON.stringify({ geaccepteerd: accepted, verdacht: review }, null, 2));
   console.log('');
   console.log(`Klaar. ${written} geschreven, ${review.length} ter controle in ${REVIEW_FILE}.`);
   console.log('Verdachte coördinaten zijn NIET weggeschreven en worden pas na goedkeuring gebruikt.');
