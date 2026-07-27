@@ -1,29 +1,38 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
-import { Courier, Institution, Pharmacy, ShiftType, TransportMode } from '../types';
-import { createShift, getCouriers, getInstitutions, getPharmacies } from './plannerService';
+import { Courier, Institution, Pharmacy, Shift, ShiftType, TransportMode } from '../types';
+import { createShift, getCouriers, getInstitutions, getPharmacies, updateShift } from './plannerService';
 import { SHIFT_TYPES, TRANSPORT_LABELS, TYPE_STYLES } from './constants';
 
 interface Props {
-  initialPharmacyId: string;
-  initialDateISO: string;
+  // Aanwezig => bewerkmodus. Afwezig => aanmaakmodus.
+  shift?: Shift;
+  // Aanmaakmodus: voorgeselecteerde apotheek + datum van de aangeklikte cel.
+  initialPharmacyId?: string;
+  initialDateISO?: string;
   onClose: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
 }
 
-export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onClose, onCreated }: Props) {
+export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, onClose, onSaved }: Props) {
+  const isEdit = !!shift;
+  // Datum ligt vast (uit de aangeklikte cel bij aanmaken, uit de dienst bij bewerken).
+  const shiftDate = shift?.shiftDate ?? initialDateISO ?? '';
+
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
 
-  const [selectedPharmacyIds, setSelectedPharmacyIds] = useState<string[]>([initialPharmacyId]);
-  const [courierId, setCourierId] = useState<string>('');       // '' = open
-  const [shiftType, setShiftType] = useState<ShiftType>('regular');
-  const [transportMode, setTransportMode] = useState<TransportMode>('bike');
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('');
-  const [selectedInstitutionIds, setSelectedInstitutionIds] = useState<string[]>([]);
-  const [description, setDescription] = useState('');
+  const [selectedPharmacyIds, setSelectedPharmacyIds] = useState<string[]>(
+    shift ? shift.pharmacyIds : (initialPharmacyId ? [initialPharmacyId] : []),
+  );
+  const [courierId, setCourierId] = useState<string>(shift?.courierId ?? ''); // '' = open
+  const [shiftType, setShiftType] = useState<ShiftType>(shift?.shiftType ?? 'regular');
+  const [transportMode, setTransportMode] = useState<TransportMode>(shift?.transportMode ?? 'bike');
+  const [startTime, setStartTime] = useState(shift?.startTime ?? '09:00');
+  const [endTime, setEndTime] = useState(shift?.budgetedEndTime ?? '');
+  const [selectedInstitutionIds, setSelectedInstitutionIds] = useState<string[]>(shift ? shift.institutionIds : []);
+  const [description, setDescription] = useState(shift?.description ?? '');
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -42,14 +51,22 @@ export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onC
   }, []);
 
   // Instellingen (her)laden zodra type = instelling én de apotheekselectie wijzigt.
+  // De reconciliatie van geselecteerde instellingen gebeurt hier (binnen de load),
+  // zodat een voorgevulde selectie in bewerkmodus niet gewist wordt vóór het laden.
   useEffect(() => {
     if (shiftType !== 'institution' || selectedPharmacyIds.length === 0) {
       setInstitutions([]);
+      setSelectedInstitutionIds([]);
       return;
     }
     let cancelled = false;
     getInstitutions(selectedPharmacyIds)
-      .then((list) => { if (!cancelled) setInstitutions(list); })
+      .then((list) => {
+        if (cancelled) return;
+        setInstitutions(list);
+        // Selecties die niet meer bij de apotheekkeuze horen, deselecteren.
+        setSelectedInstitutionIds((ids) => ids.filter((id) => list.some((i) => i.id === id)));
+      })
       .catch(() => { if (!cancelled) setInstitutions([]); });
     return () => { cancelled = true; };
   }, [shiftType, selectedPharmacyIds]);
@@ -61,14 +78,12 @@ export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onC
   );
 
   // Als de geselecteerde koerier niet langer in aanmerking komt: terug naar open.
+  // Guard op couriers.length zodat een voorgevulde koerier niet gewist wordt
+  // voordat de koerierslijst geladen is.
   useEffect(() => {
+    if (couriers.length === 0) return;
     if (courierId && !eligibleCouriers.some((c) => c.id === courierId)) setCourierId('');
-  }, [eligibleCouriers, courierId]);
-
-  // Instellingen die niet meer bij de apotheekselectie horen, deselecteren.
-  useEffect(() => {
-    setSelectedInstitutionIds((ids) => ids.filter((id) => institutions.some((i) => i.id === id)));
-  }, [institutions]);
+  }, [eligibleCouriers, courierId, couriers.length]);
 
   function togglePharmacy(id: string) {
     setSelectedPharmacyIds((ids) =>
@@ -89,20 +104,23 @@ export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onC
     if (selectedPharmacyIds.length === 0) { setError('Kies minstens één apotheek.'); return; }
     if (!startTime) { setError('Vul een starttijd in.'); return; }
 
+    const payload = {
+      courierId: courierId || null,
+      shiftType,
+      shiftDate,
+      startTime,
+      budgetedEndTime: endTime || null,
+      transportMode,
+      description: showDescription ? (description.trim() || null) : null,
+      pharmacyIds: selectedPharmacyIds,
+      institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
+    };
+
     setSaving(true);
     try {
-      await createShift({
-        courierId: courierId || null,
-        shiftType,
-        shiftDate: initialDateISO,
-        startTime,
-        budgetedEndTime: endTime || null,
-        transportMode,
-        description: showDescription ? (description.trim() || null) : null,
-        pharmacyIds: selectedPharmacyIds,
-        institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
-      });
-      onCreated();
+      if (isEdit) await updateShift(shift!.id, payload);
+      else await createShift(payload);
+      onSaved();
     } catch (err: any) {
       setError(err?.message ?? 'Opslaan mislukt.');
     } finally {
@@ -118,7 +136,9 @@ export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onC
         className="bg-white rounded-xl shadow-lg w-full max-w-lg my-8 p-5 space-y-4"
       >
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-slate-800">Nieuwe dienst — {initialDateISO}</h2>
+          <h2 className="font-semibold text-slate-800">
+            {isEdit ? 'Dienst bewerken' : 'Dienst toevoegen'} — {shiftDate}
+          </h2>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={18} /></button>
         </div>
 
@@ -246,7 +266,7 @@ export default function CreateShiftForm({ initialPharmacyId, initialDateISO, onC
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900">Annuleren</button>
           <button type="submit" disabled={saving}
             className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium">
-            {saving ? 'Opslaan…' : 'Dienst opslaan'}
+            {saving ? (isEdit ? 'Opslaan…' : 'Aanmaken…') : (isEdit ? 'Opslaan' : 'Aanmaken')}
           </button>
         </div>
       </form>

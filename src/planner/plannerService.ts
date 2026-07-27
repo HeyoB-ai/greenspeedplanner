@@ -155,3 +155,89 @@ export async function createShift(input: NewShiftInput): Promise<string> {
 
   return shiftId;
 }
+
+// ── Verwijderen (stap: planners) ────────────────────────────────────────────
+// Eén delete op shifts; shift_pharmacies en shift_institutions ruimen zichzelf
+// op via ON DELETE CASCADE (zie migratie 001).
+export async function deleteShift(shiftId: string): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.from('shifts').delete().eq('id', shiftId);
+  if (error) throw error;
+}
+
+// ── Wijzigen ────────────────────────────────────────────────────────────────
+// Werkt de dienst bij en synchroniseert de koppeltabellen incrementeel
+// (verwijder wat weg moet, voeg toe wat nieuw is) i.p.v. delete-all-then-insert,
+// om een leeg venster en onnodige churn te voorkomen. status en created_by
+// worden bewust niet aangeraakt.
+export async function updateShift(shiftId: string, input: NewShiftInput): Promise<void> {
+  const sb = requireClient();
+
+  if (input.pharmacyIds.length === 0) {
+    throw new Error('Een dienst moet aan minstens één apotheek gekoppeld zijn.');
+  }
+
+  const { error } = await sb
+    .from('shifts')
+    .update({
+      courier_id: input.courierId,
+      shift_type: input.shiftType,
+      shift_date: input.shiftDate,
+      start_time: input.startTime,
+      budgeted_end_time: input.budgetedEndTime,
+      transport_mode: input.transportMode,
+      description: input.description,
+    })
+    .eq('id', shiftId);
+  if (error) throw error;
+
+  // shift_pharmacies synchroniseren.
+  await syncJunction(
+    'shift_pharmacies', 'pharmacy_id', shiftId, input.pharmacyIds,
+  );
+
+  // shift_institutions synchroniseren. Bij een niet-instelling-dienst mogen er
+  // géén instelling-koppelingen overblijven.
+  const wantedInstitutions = input.shiftType === 'institution' ? input.institutionIds : [];
+  await syncJunction(
+    'shift_institutions', 'institution_id', shiftId, wantedInstitutions,
+  );
+}
+
+// Verschil bepalen tussen huidige en gewenste koppelingen en alleen dat muteren.
+async function syncJunction(
+  table: 'shift_pharmacies' | 'shift_institutions',
+  column: 'pharmacy_id' | 'institution_id',
+  shiftId: string,
+  wantedIds: string[],
+): Promise<void> {
+  const sb = requireClient();
+
+  const { data: current, error: readErr } = await sb
+    .from(table)
+    .select(column)
+    .eq('shift_id', shiftId);
+  if (readErr) throw readErr;
+
+  const currentIds = new Set((current ?? []).map((r: any) => r[column] as string));
+  const wanted = new Set(wantedIds);
+
+  const toAdd = wantedIds.filter((id) => !currentIds.has(id));
+  const toRemove = [...currentIds].filter((id) => !wanted.has(id));
+
+  if (toRemove.length > 0) {
+    const { error: delErr } = await sb
+      .from(table)
+      .delete()
+      .eq('shift_id', shiftId)
+      .in(column, toRemove);
+    if (delErr) throw delErr;
+  }
+
+  if (toAdd.length > 0) {
+    const { error: insErr } = await sb
+      .from(table)
+      .insert(toAdd.map((id) => ({ shift_id: shiftId, [column]: id })));
+    if (insErr) throw insErr;
+  }
+}

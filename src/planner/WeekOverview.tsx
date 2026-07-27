@@ -14,11 +14,17 @@ type CourierFilter = 'all' | 'open' | string;
 interface Props {
   // Wordt aangeroepen als de planner op een cel klikt om een dienst aan te maken.
   onCreate: (pharmacyId: string, dateISO: string) => void;
-  // Verhoog dit getal na een succesvolle aanmaak → herlaadt de week.
+  // Bewerk-/verwijderacties ontstaan in DayView (die hier via een early return
+  // gerenderd wordt). We tillen DayView NIET naar App; in plaats daarvan geven we
+  // deze callbacks door WeekOverview heen naar App, dat de modals + het
+  // refreshSignal beheert. Zo blijft alle weekdata (shifts, namen) hier lokaal.
+  onEdit: (shift: Shift) => void;
+  onDelete: (shift: Shift) => void;
+  // Verhoog dit getal na een succesvolle aanmaak/wijziging/verwijdering → herlaadt de week.
   refreshSignal: number;
 }
 
-export default function WeekOverview({ onCreate, refreshSignal }: Props) {
+export default function WeekOverview({ onCreate, onEdit, onDelete, refreshSignal }: Props) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
@@ -106,6 +112,8 @@ export default function WeekOverview({ onCreate, refreshSignal }: Props) {
         pharmacyNames={pharmacyName}
         institutionNames={institutionNames}
         onBack={() => setSelectedDay(null)}
+        onEdit={onEdit}
+        onDelete={onDelete}
       />
     );
   }

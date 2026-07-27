@@ -1,4 +1,4 @@
-import { ArrowLeft, Bike, Car, MapPin, UserCircle2, Users } from 'lucide-react';
+import { ArrowLeft, Bike, Car, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
 import { Shift } from '../types';
 import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG } from './constants';
 
@@ -8,10 +8,12 @@ interface Props {
   pharmacyNames: Map<string, string>;
   institutionNames: Map<string, string>;
   onBack: () => void;
+  onEdit: (shift: Shift) => void;
+  onDelete: (shift: Shift) => void;
 }
 
 // Ingezoomde dagweergave met meer detail per dienst.
-export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack }: Props) {
+export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete }: Props) {
   const dow = (date.getDay() + 6) % 7;
   const heading = `${WEEKDAY_LABELS_LONG[dow]} ${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}`;
 
@@ -75,6 +77,21 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
               {s.description && (
                 <p className="mt-2 text-sm text-slate-500 italic">{s.description}</p>
               )}
+
+              <div className="mt-3 flex justify-end gap-2 border-t border-slate-100 pt-2">
+                <button
+                  type="button" onClick={() => onEdit(s)}
+                  className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"
+                >
+                  <Pencil size={14} /> Bewerken
+                </button>
+                <button
+                  type="button" onClick={() => onDelete(s)}
+                  className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700"
+                >
+                  <Trash2 size={14} /> Verwijderen
+                </button>
+              </div>
             </div>
           );
         })}
