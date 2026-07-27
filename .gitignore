@@ -7,3 +7,6 @@ dist-ssr
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
+
+# Gegenereerde controlelijst van het geocode-backfill-script
+scripts/pharmacy-geocode-review.json
