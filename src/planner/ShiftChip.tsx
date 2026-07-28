@@ -1,16 +1,20 @@
-import { Bike, Car, Repeat, UserCircle2, Users } from 'lucide-react';
+import { AlertTriangle, Bike, Car, Repeat, UserCircle2, Users } from 'lucide-react';
 import { Shift } from '../types';
+import { ShiftConflict } from './conflicts';
 import { TYPE_STYLES } from './constants';
 
 // Eén dienst als gekleurde chip in een cel. Kleur = type. Open dienst (geen
 // koerier) krijgt een gestreepte rand + "Open"-markering. Gedeelde dienst
 // (meerdere apotheken) krijgt een Users-indicatie.
-export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: () => void }) {
+export default function ShiftChip(
+  { shift, conflict, onClick }: { shift: Shift; conflict?: ShiftConflict; onClick?: () => void },
+) {
   const style = TYPE_STYLES[shift.shiftType];
   const isOpen = !shift.courierId;
   const isShared = shift.pharmacyIds.length > 1;
   const isDraft = shift.status === 'draft';
   const isSchedule = !!shift.scheduleId;
+  const conflictLevel = conflict?.level ?? 'none';
   const TransportIcon = shift.transportMode === 'car' ? Car : Bike;
 
   const time = shift.budgetedEndTime
@@ -40,6 +44,8 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
       <div className="flex items-center justify-between gap-1">
         <span className="font-semibold tabular-nums">{time}</span>
         <span className="flex items-center gap-1 shrink-0">
+          {conflictLevel === 'hard' && <AlertTriangle size={12} className="text-red-600" aria-label="Harde tijdoverlap" />}
+          {conflictLevel === 'soft' && <AlertTriangle size={12} className="text-amber-500" aria-label="Samenloop zelfde dag" />}
           {isSchedule && <Repeat size={12} aria-label="Uit rooster" />}
           {isShared && <Users size={12} aria-label="Gedeelde dienst" />}
           <TransportIcon size={12} aria-label={shift.transportMode} />

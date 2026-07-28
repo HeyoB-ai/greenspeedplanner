@@ -126,6 +126,49 @@ export async function getShiftsForWeek(
   }));
 }
 
+// Diensten van één koerier op één datum — voor de conflictcheck bij opslaan.
+export async function getCourierShiftsOnDate(
+  courierId: string, dateISO: string, excludeShiftId?: string,
+): Promise<Shift[]> {
+  const sb = requireClient();
+  let q = sb
+    .from('shifts')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable, schedule_id')
+    .eq('courier_id', courierId)
+    .eq('shift_date', dateISO);
+  if (excludeShiftId) q = q.neq('id', excludeShiftId);
+  const { data: rows, error } = await q;
+  if (error) throw error;
+  const list = rows ?? [];
+  if (list.length === 0) return [];
+
+  const ids = list.map((s: any) => s.id);
+  const { data: sp } = await sb.from('shift_pharmacies').select('shift_id, pharmacy_id').in('shift_id', ids);
+  const byShift = new Map<string, string[]>();
+  (sp ?? []).forEach((r: any) => {
+    const l = byShift.get(r.shift_id) ?? [];
+    l.push(r.pharmacy_id);
+    byShift.set(r.shift_id, l);
+  });
+
+  return list.map((s: any): Shift => ({
+    id: s.id,
+    courierId: s.courier_id,
+    courierName: null,
+    shiftType: s.shift_type,
+    shiftDate: s.shift_date,
+    startTime: shortTime(s.start_time),
+    budgetedEndTime: s.budgeted_end_time ? shortTime(s.budgeted_end_time) : null,
+    status: s.status,
+    transportMode: s.transport_mode,
+    description: s.description,
+    pharmacyIds: byShift.get(s.id) ?? [],
+    institutionIds: [],
+    timingReliable: s.timing_reliable ?? false,
+    scheduleId: s.schedule_id ?? null,
+  }));
+}
+
 // ── Aanmaken (stap C) ──────────────────────────────────────────────────────
 export async function createShift(input: NewShiftInput): Promise<string> {
   const sb = requireClient();

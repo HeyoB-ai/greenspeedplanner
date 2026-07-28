@@ -1,5 +1,6 @@
-import { ArrowLeft, Bike, Car, CheckCircle2, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bike, Car, CheckCircle2, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
 import { Shift } from '../types';
+import { ConflictOther, ShiftConflict } from './conflicts';
 import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG } from './constants';
 
 interface Props {
@@ -11,10 +12,16 @@ interface Props {
   onEdit: (shift: Shift) => void;
   onDelete: (shift: Shift) => void;
   onConfirm: (shift: Shift) => void;
+  conflicts: Map<string, ShiftConflict>;
 }
 
 // Ingezoomde dagweergave met meer detail per dienst.
-export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm }: Props) {
+export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm, conflicts }: Props) {
+  const describeOther = (o: ConflictOther) => {
+    const time = o.endTime ? `${o.startTime}–${o.endTime}` : o.startTime;
+    const phs = o.pharmacyIds.map((id) => pharmacyNames.get(id) ?? id).join(', ');
+    return `${time}${phs ? ` (${phs})` : ''} — ${o.status === 'draft' ? 'concept' : 'bevestigd'}`;
+  };
   const dow = (date.getDay() + 6) % 7;
   const heading = `${WEEKDAY_LABELS_LONG[dow]} ${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}`;
 
@@ -36,6 +43,7 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
           const TransportIcon = s.transportMode === 'car' ? Car : Bike;
           const time = s.budgetedEndTime ? `${s.startTime}–${s.budgetedEndTime}` : s.startTime;
           const isDraft = s.status === 'draft';
+          const conflict = conflicts.get(s.id);
           return (
             <div key={s.id} className={`rounded-lg border ${style.border} bg-white p-3 ${isDraft ? 'border-dashed' : ''}`}>
               <div className="flex items-center justify-between">
@@ -50,6 +58,22 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
                 </span>
                 <span className="text-sm font-semibold tabular-nums">{time}</span>
               </div>
+
+              {conflict && conflict.level !== 'none' && (
+                <div className={`mt-2 flex items-start gap-1.5 text-sm rounded-md p-2 ${conflict.level === 'hard' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <span>
+                    {conflict.level === 'hard'
+                      ? (conflict.hardWithConfirmed
+                          ? 'Harde tijdoverlap met een al bevestigde dienst (koerier is al geïnformeerd):'
+                          : 'Harde tijdoverlap met een ander concept:')
+                      : 'Zelfde koerier, zelfde dag — samenloop:'}
+                    <ul className="mt-0.5 list-disc list-inside">
+                      {conflict.others.map((o) => <li key={o.id}>{describeOther(o)}</li>)}
+                    </ul>
+                  </span>
+                </div>
+              )}
 
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
                 <span className="inline-flex items-center gap-1">

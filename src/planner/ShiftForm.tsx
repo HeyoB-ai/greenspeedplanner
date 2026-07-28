@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { Courier, Institution, Pharmacy, Shift, ShiftType, TransportMode } from '../types';
-import { createShift, getCouriers, getInstitutions, getPharmacies, updateShift } from './plannerService';
+import { createShift, getCouriers, getCourierShiftsOnDate, getInstitutions, getPharmacies, updateShift } from './plannerService';
+import { pairLevel } from './conflicts';
 import { SHIFT_TYPES, TRANSPORT_LABELS, TYPE_STYLES } from './constants';
 
 interface Props {
@@ -37,6 +38,9 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [conflictPrompt, setConflictPrompt] = useState<Shift[] | null>(null);
+
+  const pharmacyName = useMemo(() => new Map(pharmacies.map((p) => [p.id, p.name])), [pharmacies]);
 
   // Referentiedata laden.
   useEffect(() => {
@@ -99,13 +103,8 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
 
   const showDescription = shiftType === 'other_transport' || shiftType === 'urgent';
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError('');
-    if (selectedPharmacyIds.length === 0) { setError('Kies minstens één apotheek.'); return; }
-    if (!startTime) { setError('Vul een starttijd in.'); return; }
-
-    const payload = {
+  function buildPayload() {
+    return {
       courierId: courierId || null,
       shiftType,
       shiftDate,
@@ -117,17 +116,46 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
       institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
       timingReliable,
     };
+  }
 
+  async function doSave() {
+    setConflictPrompt(null);
     setSaving(true);
     try {
-      if (isEdit) await updateShift(shift!.id, payload);
-      else await createShift(payload);
+      if (isEdit) await updateShift(shift!.id, buildPayload());
+      else await createShift(buildPayload());
       onSaved();
     } catch (err: any) {
       setError(err?.message ?? 'Opslaan mislukt.');
     } finally {
       setSaving(false);
     }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setError('');
+    if (selectedPharmacyIds.length === 0) { setError('Kies minstens één apotheek.'); return; }
+    if (!startTime) { setError('Vul een starttijd in.'); return; }
+
+    // Harde tijdoverlap met een andere dienst van deze koerier op deze datum?
+    if (courierId) {
+      setSaving(true);
+      try {
+        const others = await getCourierShiftsOnDate(courierId, shiftDate, isEdit ? shift!.id : undefined);
+        const probe: Shift = {
+          id: 'nieuw', courierId, courierName: null, shiftType, shiftDate,
+          startTime, budgetedEndTime: endTime || null, status: shift?.status ?? 'draft',
+          transportMode, description: null, pharmacyIds: selectedPharmacyIds,
+          institutionIds: [], timingReliable, scheduleId: shift?.scheduleId ?? null,
+        };
+        const hard = others.filter((o) => pairLevel(probe, o) === 'hard');
+        if (hard.length > 0) { setConflictPrompt(hard); setSaving(false); return; }
+      } catch (err: any) {
+        setError(err?.message ?? 'Conflictcheck mislukt.'); setSaving(false); return;
+      }
+    }
+    await doSave();
   }
 
   return (
@@ -289,6 +317,41 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
           </button>
         </div>
       </form>
+
+      {conflictPrompt && (
+        <div className="fixed inset-0 z-10 bg-black/50 flex items-center justify-center p-4"
+          onClick={(e) => { e.stopPropagation(); setConflictPrompt(null); }}>
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle size={18} /><h3 className="font-semibold">Tijdconflict</h3>
+            </div>
+            <p className="text-sm text-slate-600">
+              {couriers.find((c) => c.id === courierId)?.name ?? 'Deze koerier'} staat die dag al op
+              {conflictPrompt.length === 1 ? ' een dienst die' : ` ${conflictPrompt.length} diensten die`} overlapt{conflictPrompt.length === 1 ? '' : 'en'}:
+            </p>
+            <ul className="text-sm list-disc list-inside text-slate-700">
+              {conflictPrompt.map((o) => (
+                <li key={o.id}>
+                  {o.budgetedEndTime ? `${o.startTime}–${o.budgetedEndTime}` : o.startTime}
+                  {o.pharmacyIds.length > 0 && ` (${o.pharmacyIds.map((id) => pharmacyName.get(id) ?? id).join(', ')})`}
+                  {' — '}{o.status === 'draft' ? 'concept' : 'bevestigd'}
+                </li>
+              ))}
+            </ul>
+            {conflictPrompt.some((o) => o.status !== 'draft') && (
+              <p className="text-sm text-amber-700">Minstens één is al bevestigd — de koerier is daarvoor al geïnformeerd.</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setConflictPrompt(null)}
+                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900">Annuleren</button>
+              <button type="button" onClick={doSave}
+                className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">
+                Toch {isEdit ? 'opslaan' : 'aanmaken'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

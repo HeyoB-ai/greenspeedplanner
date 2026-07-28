@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { Courier, Pharmacy, Shift } from '../types';
 import { confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
 import {
   addDays, formatDayHeader, isoWeekNumber, startOfWeek, toISODate, weekDays,
 } from './dates';
 import { SHIFT_TYPES, TYPE_STYLES, WEEKDAY_LABELS } from './constants';
+import { detectConflicts } from './conflicts';
 import ShiftChip from './ShiftChip';
 import DayView from './DayView';
 
@@ -107,8 +108,17 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     return map;
   }, [shifts, courierFilter, onlyDrafts, draftKind]);
 
+  // Tijdconflicten over de hele geladen week (los van de cel-filters).
+  const conflicts = useMemo(() => detectConflicts(shifts), [shifts]);
+  const hardConflictCount = useMemo(
+    () => [...conflicts.values()].filter((c) => c.level === 'hard').length, [conflicts]);
+  const softConflictCount = useMemo(
+    () => [...conflicts.values()].filter((c) => c.level === 'soft').length, [conflicts]);
+
   // Onbevestigde diensten in de zichtbare week (los van de cel-filters).
   const weekDrafts = useMemo(() => shifts.filter((s) => s.status === 'draft'), [shifts]);
+  const draftsHardConflict = useMemo(
+    () => weekDrafts.filter((s) => conflicts.get(s.id)?.level === 'hard').length, [weekDrafts, conflicts]);
   const scheduleDraftCount = useMemo(() => weekDrafts.filter((s) => s.scheduleId).length, [weekDrafts]);
   const manualDraftCount = weekDrafts.length - scheduleDraftCount;
   const draftPeriod = useMemo(() => {
@@ -157,6 +167,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
         onEdit={onEdit}
         onDelete={onDelete}
         onConfirm={(s) => handleConfirm([s.id])}
+        conflicts={conflicts}
       />
     );
   }
@@ -190,8 +201,14 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           Deze week
         </button>
 
-        {/* Concept-teller + bulk bevestigen (zichtbare week) */}
+        {/* Conflict-teller + concept-teller + bulk bevestigen (zichtbare week) */}
         <div className="ml-auto flex items-center gap-3">
+          {(hardConflictCount + softConflictCount) > 0 && (
+            <span className="text-sm">
+              <span className="text-red-600 font-medium">{hardConflictCount} tijdconflict{hardConflictCount === 1 ? '' : 'en'}</span>
+              {softConflictCount > 0 && <span className="text-amber-600"> · {softConflictCount} aandacht</span>}
+            </span>
+          )}
           <span className="text-sm text-slate-500">
             {weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'} onbevestigd
             {weekDrafts.length > 0 && (
@@ -317,7 +334,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                       ) : (
                         <div className="space-y-1">
                           {cellShifts.map((s) => (
-                            <ShiftChip key={s.id} shift={s} onClick={() => setSelectedDay(d)} />
+                            <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} onClick={() => setSelectedDay(d)} />
                           ))}
                           <button
                             onClick={() => onCreate(p.id, dayISO)}
@@ -360,6 +377,13 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
               {draftPeriod && <>, van <strong>{draftPeriod.from}</strong> t/m <strong>{draftPeriod.to}</strong></>}.
               Ze worden daarna zichtbaar voor de koeriers. Dit kan niet worden teruggedraaid.
             </p>
+            {draftsHardConflict > 0 && (
+              <p className="flex items-start gap-1.5 text-sm text-red-600">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                Let op: {draftsHardConflict} hiervan {draftsHardConflict === 1 ? 'heeft' : 'hebben'} een
+                harde tijdoverlap met een andere dienst van dezelfde koerier.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button" disabled={confirmBusy}
