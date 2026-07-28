@@ -59,13 +59,31 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const normalizePostcode = (pc) => (pc ?? '').replace(/\s+/g, '').toUpperCase();
 
+// NL-postcode ergens in een tekst (bv. de vrije adresregel "... 1213 BE Hilversum").
+const NL_POSTCODE = /(\d{4})\s?([A-Za-z]{2})/;
+
+// Verwachte postcode voor de kruischeck: de losse kolom als die er is, anders uit
+// de vrije adresregel getrokken (die 4 apotheken hebben alleen 'address' gevuld).
+function expectedPostcode(p) {
+  if (p.postalCode) return p.postalCode;
+  const m = p.address && p.address.match(NL_POSTCODE);
+  return m ? `${m[1]} ${m[2]}` : null;
+}
+
 function buildAddress(p) {
   const parts = [
     [p.street, p.houseNumber].filter(Boolean).join(' '),
     [p.postalCode, p.city].filter(Boolean).join(' '),
   ].filter((s) => s && s.trim());
-  if (parts.length === 0) return null;
-  return parts.join(', ') + ', Netherlands';
+  if (parts.length > 0) return parts.join(', ') + ', Netherlands';
+
+  // Terugval: de volledige adresregel uit 'address' (soms zonder komma tussen
+  // straat en postcode — Google verwerkt vrije-tekst-adressen prima).
+  if (p.address && p.address.trim()) {
+    const a = p.address.trim();
+    return /nederland|netherlands/i.test(a) ? a : `${a}, Netherlands`;
+  }
+  return null;
 }
 
 async function geocode(address) {
@@ -95,9 +113,10 @@ function qualityIssues(g, pharmacy) {
     issues.push(`location_type=${g.locationType}`);
   }
   if (g.partialMatch) issues.push('partial_match');
-  if (pharmacy.postalCode && g.postal
-      && normalizePostcode(g.postal) !== normalizePostcode(pharmacy.postalCode)) {
-    issues.push(`postcode wijkt af (schema=${pharmacy.postalCode}, geocoder=${g.postal})`);
+  const expected = expectedPostcode(pharmacy);
+  if (expected && g.postal
+      && normalizePostcode(g.postal) !== normalizePostcode(expected)) {
+    issues.push(`postcode wijkt af (verwacht=${expected}, geocoder=${g.postal})`);
   }
   return issues;
 }
@@ -105,7 +124,7 @@ function qualityIssues(g, pharmacy) {
 async function main() {
   const { data: pharmacies, error } = await sb
     .from('pharmacies')
-    .select('id, name, street, houseNumber, postalCode, city, addressLat, addressLng')
+    .select('id, name, street, houseNumber, postalCode, city, address, addressLat, addressLng')
     .or('addressLat.is.null,addressLng.is.null');
   if (error) die('Ophalen apotheken mislukt: ' + error.message);
 
