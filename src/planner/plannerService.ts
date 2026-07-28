@@ -21,21 +21,30 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
   return (data ?? []) as Pharmacy[];
 }
 
-// Alle koeriers (planners mogen alle profielen lezen via is_privileged()).
-// pharmacy_ids is de planner-leesbare bron voor koppelingen — courier_pharmacy_access
-// is per RLS enkel voor de koerier zelf leesbaar.
+// Alle koeriers, met hun apotheek-koppelingen uit courier_pharmacy_access (CPA)
+// — de echte koppelbron. Sinds migratie 008 mag een planner (is_privileged) de
+// volledige CPA lezen; we leunen niet langer op user_profiles.pharmacy_ids (die
+// spiegel loopt uiteen: append-only + handmatig bewerkbaar).
 export async function getCouriers(): Promise<Courier[]> {
   const sb = requireClient();
-  const { data, error } = await sb
-    .from('user_profiles')
-    .select('id, name, pharmacy_ids')
-    .eq('role', 'courier')
-    .order('name', { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map((r: any) => ({
+  const [{ data: profiles, error: pErr }, { data: cpa, error: cErr }] = await Promise.all([
+    sb.from('user_profiles').select('id, name').eq('role', 'courier').order('name', { ascending: true }),
+    sb.from('courier_pharmacy_access').select('courier_id, pharmacy_id'),
+  ]);
+  if (pErr) throw pErr;
+  if (cErr) throw cErr;
+
+  const byCourier = new Map<string, string[]>();
+  (cpa ?? []).forEach((r: any) => {
+    const list = byCourier.get(r.courier_id) ?? [];
+    list.push(r.pharmacy_id);
+    byCourier.set(r.courier_id, list);
+  });
+
+  return (profiles ?? []).map((r: any) => ({
     id: r.id,
     name: r.name,
-    pharmacyIds: (r.pharmacy_ids ?? []) as string[],
+    pharmacyIds: byCourier.get(r.id) ?? [],
   }));
 }
 
