@@ -33,6 +33,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
   const [endTime, setEndTime] = useState(shift?.budgetedEndTime ?? '');
   const [selectedInstitutionIds, setSelectedInstitutionIds] = useState<string[]>(shift ? shift.institutionIds : []);
   const [description, setDescription] = useState(shift?.description ?? '');
+  const [timingReliable, setTimingReliable] = useState(shift?.timingReliable ?? false);
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -114,6 +115,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
       description: showDescription ? (description.trim() || null) : null,
       pharmacyIds: selectedPharmacyIds,
       institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
+      timingReliable,
     };
 
     setSaving(true);
@@ -259,6 +261,23 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
               placeholder="Korte omschrijving van de rit…" />
           </div>
         )}
+
+        {/* Kalibratie-markering */}
+        <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3 cursor-pointer">
+          <input
+            type="checkbox" checked={timingReliable}
+            onChange={(e) => setTimingReliable(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span className="text-sm">
+            <span className="font-medium">Bruikbaar voor kalibratie</span>
+            <span className="block text-xs text-slate-500">
+              Alleen aanvinken als dit een volledige, echte dienst is — van ophalen tot de laatste
+              bezorging. Uitgevinkt laten bij testritten of onderbroken diensten; de berekende
+              tijden tellen dan niet mee in de ijking.
+            </span>
+          </span>
+        </label>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

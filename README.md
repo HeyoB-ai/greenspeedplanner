@@ -29,6 +29,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `004_pharmacy_coords.sql` | `pharmacies."addressLat"/"addressLng"` |
 | `005_draft_status.sql` | concept-status `draft` op `shifts` + RLS-afdichting |
 | `006_shift_time_reports.sql` | `shift_time_reports` + RLS/trigger + `shifts.car_is_own` |
+| `007_timing_reliable.sql` | `shifts.timing_reliable` (kalibratie-markering, default false) |
 
 ## Scripts
 

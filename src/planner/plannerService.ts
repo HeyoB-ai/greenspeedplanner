@@ -69,7 +69,7 @@ export async function getShiftsForWeek(
 
   const { data: shifts, error } = await sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable')
     .gte('shift_date', startDate)
     .lte('shift_date', endDate)
     .order('start_time', { ascending: true });
@@ -112,6 +112,7 @@ export async function getShiftsForWeek(
     description: s.description,
     pharmacyIds: pharmaciesByShift.get(s.id) ?? [],
     institutionIds: institutionsByShift.get(s.id) ?? [],
+    timingReliable: s.timing_reliable ?? false,
   }));
 }
 
@@ -132,6 +133,7 @@ export async function createShift(input: NewShiftInput): Promise<string> {
       // status niet meegegeven → DB-default 'draft' (concept). Bevestigen tilt
       // hem later naar 'planned'.
       description: input.description,
+      timing_reliable: input.timingReliable,
       created_by: session?.user.id ?? null,
     })
     .select('id')
@@ -188,6 +190,7 @@ export async function updateShift(shiftId: string, input: NewShiftInput): Promis
       budgeted_end_time: input.budgetedEndTime,
       transport_mode: input.transportMode,
       description: input.description,
+      timing_reliable: input.timingReliable,
     })
     .eq('id', shiftId);
   if (error) throw error;

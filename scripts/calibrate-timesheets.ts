@@ -86,12 +86,15 @@ async function fetchAllPackages(from: string, to: string): Promise<any[]> {
 async function main() {
   // 1. Afgeronde diensten met een koerier.
   const today = new Date().toISOString().slice(0, 10);
-  // Concept-diensten ('draft') tellen NOOIT mee in het rekenmodel/de kalibratie.
+  // Concept-diensten ('draft') tellen NOOIT mee. Én harde filter op
+  // timing_reliable: alleen diensten die de planner als volledige, echte rit
+  // heeft gemarkeerd komen in de kalibratie (default false → standaard eruit).
   let q = sb
     .from('shifts')
     .select('id, courier_id, shift_date, start_time, budgeted_end_time, transport_mode')
     .not('courier_id', 'is', null)
     .neq('status', 'draft')
+    .eq('timing_reliable', true)
     .lt('shift_date', today);
   if (argFrom) q = q.gte('shift_date', argFrom);
   if (argTo) q = q.lte('shift_date', argTo);

@@ -52,6 +52,8 @@ export interface Shift {
   description: string | null;
   pharmacyIds: string[];
   institutionIds: string[];
+  // Planner-assertie dat de tijden bruikbaar zijn voor kalibratie (default false).
+  timingReliable: boolean;
 }
 
 // Payload voor het aanmaken van een dienst (stap C).
@@ -65,4 +67,5 @@ export interface NewShiftInput {
   description: string | null;
   pharmacyIds: string[];
   institutionIds: string[];
+  timingReliable: boolean;
 }
