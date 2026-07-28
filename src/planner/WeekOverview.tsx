@@ -20,6 +20,8 @@ interface Props {
   // refreshSignal beheert. Zo blijft alle weekdata (shifts, namen) hier lokaal.
   onEdit: (shift: Shift) => void;
   onDelete: (shift: Shift) => void;
+  // Klik op een apotheek in de linkerkolom → roosterscherm.
+  onOpenSchedule: (pharmacy: { id: string; name: string }) => void;
   // Bevestigen (concept → planned) handelen we hier lokaal af, want alle
   // weekdata zit hier. Na afloop trigger deze callback het refreshSignal in App.
   onChanged: () => void;
@@ -27,7 +29,7 @@ interface Props {
   refreshSignal: number;
 }
 
-export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, refreshSignal }: Props) {
+export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedule, onChanged, refreshSignal }: Props) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
@@ -40,6 +42,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
   const [courierFilter, setCourierFilter] = useState<CourierFilter>('all');
   const [onlyWithShifts, setOnlyWithShifts] = useState(false);
   const [onlyDrafts, setOnlyDrafts] = useState(false);
+  const [draftKind, setDraftKind] = useState<'all' | 'manual' | 'schedule'>('all');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -80,8 +83,13 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
     return s.courierId === courierFilter;
   };
 
+  const passesDraftKind = (s: Shift): boolean => {
+    if (draftKind === 'all') return true;
+    if (draftKind === 'schedule') return !!s.scheduleId;
+    return !s.scheduleId; // 'manual'
+  };
   const passesFilters = (s: Shift): boolean =>
-    passesCourierFilter(s) && (!onlyDrafts || s.status === 'draft');
+    passesCourierFilter(s) && (!onlyDrafts || s.status === 'draft') && passesDraftKind(s);
 
   // shiftsByPharmacyDay[pharmacyId][dateISO] = Shift[]
   const grid = useMemo(() => {
@@ -97,10 +105,17 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
       }
     }
     return map;
-  }, [shifts, courierFilter, onlyDrafts]);
+  }, [shifts, courierFilter, onlyDrafts, draftKind]);
 
   // Onbevestigde diensten in de zichtbare week (los van de cel-filters).
   const weekDrafts = useMemo(() => shifts.filter((s) => s.status === 'draft'), [shifts]);
+  const scheduleDraftCount = useMemo(() => weekDrafts.filter((s) => s.scheduleId).length, [weekDrafts]);
+  const manualDraftCount = weekDrafts.length - scheduleDraftCount;
+  const draftPeriod = useMemo(() => {
+    if (weekDrafts.length === 0) return null;
+    const ds = weekDrafts.map((s) => s.shiftDate).sort();
+    return { from: ds[0], to: ds[ds.length - 1] };
+  }, [weekDrafts]);
 
   async function handleConfirm(ids: string[]) {
     if (ids.length === 0) return;
@@ -179,6 +194,9 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
         <div className="ml-auto flex items-center gap-3">
           <span className="text-sm text-slate-500">
             {weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'} onbevestigd
+            {weekDrafts.length > 0 && (
+              <span className="text-slate-400"> ({scheduleDraftCount} rooster · {manualDraftCount} handmatig)</span>
+            )}
           </span>
           <button
             onClick={() => setShowBulkConfirm(true)}
@@ -220,6 +238,15 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
         <label className="flex items-center gap-1.5 cursor-pointer">
           <input type="checkbox" checked={onlyDrafts} onChange={(e) => setOnlyDrafts(e.target.checked)} />
           <span>Alleen concepten</span>
+        </label>
+        <label className="flex items-center gap-1.5">
+          <span className="text-slate-500">Herkomst</span>
+          <select value={draftKind} onChange={(e) => setDraftKind(e.target.value as any)}
+            className="border border-slate-300 rounded-lg px-2 py-1">
+            <option value="all">Alle</option>
+            <option value="manual">Alleen handmatig</option>
+            <option value="schedule">Alleen rooster</option>
+          </select>
         </label>
       </div>
 
@@ -266,7 +293,13 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
             {visiblePharmacies.map((p) => (
               <tr key={p.id} className="align-top">
                 <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-slate-200 font-medium">
-                  {p.name}
+                  <button
+                    onClick={() => onOpenSchedule({ id: p.id, name: p.name })}
+                    className="text-left hover:text-green-700 hover:underline"
+                    title="Rooster beheren"
+                  >
+                    {p.name}
+                  </button>
                 </td>
                 {days.map((d, i) => {
                   const dayISO = toISODate(d);
@@ -322,8 +355,10 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onChanged, re
               <h2 className="font-semibold">Concepten bevestigen</h2>
             </div>
             <p className="text-sm text-slate-600">
-              Je staat op het punt <strong>{weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'}</strong> in
-              deze week te bevestigen. Ze worden daarna zichtbaar voor de koeriers. Dit kan niet worden teruggedraaid.
+              Je staat op het punt <strong>{weekDrafts.length} concept{weekDrafts.length === 1 ? '' : 'en'}</strong> te
+              bevestigen ({scheduleDraftCount} uit rooster · {manualDraftCount} handmatig)
+              {draftPeriod && <>, van <strong>{draftPeriod.from}</strong> t/m <strong>{draftPeriod.to}</strong></>}.
+              Ze worden daarna zichtbaar voor de koeriers. Dit kan niet worden teruggedraaid.
             </p>
             <div className="flex justify-end gap-2">
               <button

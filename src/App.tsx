@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { LogOut, RefreshCw, Trash2 } from 'lucide-react';
+import { CalendarClock, LogOut, RefreshCw, Trash2 } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
 import Login from './components/Login';
 import WeekOverview from './planner/WeekOverview';
 import ShiftForm from './planner/ShiftForm';
+import PharmacySchedule from './planner/PharmacySchedule';
 import { deleteShift } from './planner/plannerService';
+import { topUpScheduleWindow } from './planner/scheduleService';
 import { TYPE_STYLES } from './planner/constants';
 
 // Eén formulier-doel voor zowel aanmaken als bewerken. Het openen van dit
@@ -23,11 +25,20 @@ export default function App() {
   const [deletingShift, setDeletingShift] = useState<Shift | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [scheduleTarget, setScheduleTarget] = useState<{ id: string; name: string } | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
   useEffect(() => {
     loadSessionUser().then(setUser).finally(() => setChecking(false));
   }, []);
+
+  // Bij app-open: het roostervenster bijvullen (idempotent; marker staat in de DB).
+  useEffect(() => {
+    if (!isPlanner(user)) return;
+    topUpScheduleWindow()
+      .then((created) => { if (created > 0) setRefreshSignal((n) => n + 1); })
+      .catch(() => { /* stil: generatie is niet kritisch voor het laden */ });
+  }, [user]);
 
   async function confirmDelete() {
     if (!deletingShift) return;
@@ -90,6 +101,13 @@ export default function App() {
         <div className="flex items-center gap-3 text-sm text-slate-600">
           <span>{user.name}</span>
           <button
+            onClick={() => topUpScheduleWindow().then((n) => { if (n > 0) setRefreshSignal((x) => x + 1); }).catch(() => {})}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Roosterconcepten bijwerken t/m het venster-einde"
+          >
+            <CalendarClock size={15} /> Rooster bijwerken
+          </button>
+          <button
             onClick={() => setRefreshSignal((n) => n + 1)}
             className="inline-flex items-center gap-1 hover:text-slate-900"
           >
@@ -108,6 +126,7 @@ export default function App() {
         onCreate={(pharmacyId, dateISO) => setFormTarget({ mode: 'create', pharmacyId, dateISO })}
         onEdit={(shift) => setFormTarget({ mode: 'edit', shift })}
         onDelete={(shift) => { setDeleteError(''); setDeletingShift(shift); }}
+        onOpenSchedule={(pharmacy) => setScheduleTarget(pharmacy)}
         onChanged={() => setRefreshSignal((n) => n + 1)}
         refreshSignal={refreshSignal}
       />
@@ -181,6 +200,15 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {scheduleTarget && (
+        <PharmacySchedule
+          pharmacyId={scheduleTarget.id}
+          pharmacyName={scheduleTarget.name}
+          onClose={() => setScheduleTarget(null)}
+          onChanged={() => setRefreshSignal((n) => n + 1)}
+        />
       )}
     </div>
   );

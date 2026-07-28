@@ -1,4 +1,4 @@
-import { Bike, Car, UserCircle2, Users } from 'lucide-react';
+import { Bike, Car, Repeat, UserCircle2, Users } from 'lucide-react';
 import { Shift } from '../types';
 import { TYPE_STYLES } from './constants';
 
@@ -10,6 +10,7 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
   const isOpen = !shift.courierId;
   const isShared = shift.pharmacyIds.length > 1;
   const isDraft = shift.status === 'draft';
+  const isSchedule = !!shift.scheduleId;
   const TransportIcon = shift.transportMode === 'car' ? Car : Bike;
 
   const time = shift.budgetedEndTime
@@ -20,7 +21,7 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
     <button
       type="button"
       onClick={onClick}
-      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}`}
+      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isSchedule ? ' · uit rooster' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}`}
       className={[
         'w-full text-left rounded-md px-2 py-1 text-xs leading-tight',
         style.bg, style.text,
@@ -39,6 +40,7 @@ export default function ShiftChip({ shift, onClick }: { shift: Shift; onClick?: 
       <div className="flex items-center justify-between gap-1">
         <span className="font-semibold tabular-nums">{time}</span>
         <span className="flex items-center gap-1 shrink-0">
+          {isSchedule && <Repeat size={12} aria-label="Uit rooster" />}
           {isShared && <Users size={12} aria-label="Gedeelde dienst" />}
           <TransportIcon size={12} aria-label={shift.transportMode} />
         </span>
