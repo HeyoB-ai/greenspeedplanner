@@ -77,3 +77,14 @@ export const DEFAULT_SPEED_MPS: Record<'bike' | 'car', number> = {
 // [BIJSTELLEN MET] n.v.t. — geen kalibratie-parameter; alleen wijzigen als het
 //                  toestel-gedrag verandert.
 export const GPS_ZERO_EPS = 0.0001;
+
+// ── Data-hygiëne (GEEN model-parameter) ─────────────────────────────────────
+// Apotheken die uit ALLE tijdberekening én kalibratie geweerd worden omdat het
+// seed-/testdata is. Expliciet uitsluiten — NIET vertrouwen op het toeval dat
+// zo'n apotheek (nu) geen coördinaten heeft.
+//   ph-1 = "Test Apotheek": 386 pakketten (grootste post in de tabel), waarvan
+//   384 aan courierIds die bij geen enkel user_profile horen (seed-data).
+// Verweesde-courier-pakketten worden sowieso nooit aan een dienst gekoppeld
+// (shifts.courier_id is FK naar user_profiles), dus die vergen geen aparte
+// filter; deze lijst is de expliciete apotheek-uitsluiting.
+export const SEED_EXCLUDED_PHARMACY_IDS: string[] = ['ph-1'];

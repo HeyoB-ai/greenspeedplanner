@@ -16,8 +16,12 @@
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 import { computeShiftTime, ComputeInput, DoorScan, TransportMode } from '../src/timesheet/computeShiftTime';
-import { DEFAULT_SPEED_MPS } from '../src/timesheet/constants';
+import { DEFAULT_SPEED_MPS, SEED_EXCLUDED_PHARMACY_IDS } from '../src/timesheet/constants';
 import { percentile } from '../src/timesheet/geo';
+
+// Seed-/testapotheken die nooit meetellen (bv. ph-1 "Test Apotheek"). Expliciet,
+// niet leunend op ontbrekende coördinaten. Zie constants.ts.
+const EXCLUDED_PHARMACIES = new Set(SEED_EXCLUDED_PHARMACY_IDS);
 
 function readEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -134,12 +138,21 @@ async function main() {
 
   // 4. Per dienst het model draaien.
   const results: { shift: any; result: ReturnType<typeof computeShiftTime> }[] = [];
+  let skippedSeed = 0;
   for (const shift of shifts) {
+    // Diensten volledig voor een seed-/testapotheek overslaan (geen berekening).
+    const shiftPhs = pharmaciesByShift.get(shift.id) ?? [];
+    if (shiftPhs.length > 0 && shiftPhs.every((id) => EXCLUDED_PHARMACIES.has(id))) {
+      skippedSeed++;
+      continue;
+    }
+
     const key = `${shift.courier_id}|${shift.shift_date}`;
     const sameDay = shiftsPerCourierDate.get(key) ?? [shift];
     const linkageAmbiguous = disambiguate(shift, sameDay, pharmaciesByShift);
 
-    const pkgs = pkgByCourierDate.get(key) ?? [];
+    // Pakketten van seed-apotheken uit de scandata weren.
+    const pkgs = (pkgByCourierDate.get(key) ?? []).filter((p) => !EXCLUDED_PHARMACIES.has(p.pharmacyId));
     const sorted = [...pkgs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const firstInscanAt = sorted.length ? sorted[0].createdAt : null;
 
@@ -168,6 +181,7 @@ async function main() {
   }
 
   // 5. Rapporteren.
+  if (skippedSeed > 0) console.log(`Overgeslagen (volledig seed-apotheek): ${skippedSeed}`);
   report(results);
 
   // 6. Optioneel wegschrijven.

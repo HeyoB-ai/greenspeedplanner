@@ -36,6 +36,15 @@ de gemeten bezorgtijden of de marges, en alleen bij diensten zonder eigen
 
 Klein op een typische stadsdienst; materieel in de staart (lange laatste benen).
 
+## Data-hygiëne (geen parameter)
+
+`SEED_EXCLUDED_PHARMACY_IDS` (`constants.ts`) weert seed-/testapotheken uit alle
+berekening en kalibratie — nu `ph-1` ("Test Apotheek", 386 pakketten, waarvan 384
+aan courierIds zonder `user_profile`). Expliciet, niet leunend op toevallig
+ontbrekende coördinaten. Verweesde-courier-pakketten (courierId zonder
+`user_profile`; in totaal 384 over Test/Mijn Apotheek) worden sowieso nooit aan een
+dienst gekoppeld omdat `shifts.courier_id` een FK naar `user_profiles` is.
+
 ## Werkwijze
 
 Wijzig een waarde alléén in `constants.ts`, verhoog `MODEL_VERSION`, en noteer de
