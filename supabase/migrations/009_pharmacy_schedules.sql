@@ -103,7 +103,7 @@ INSERT INTO public.schedule_generation_state (id) VALUES (true) ON CONFLICT DO N
 -- ────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.generate_schedule_shifts(p_horizon_weeks INT DEFAULT 10)
 RETURNS INT
-LANGUAGE plpgsql SECURITY DEFINER AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_today   DATE := current_date;
   v_end     DATE := current_date + (p_horizon_weeks * 7);
