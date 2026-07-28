@@ -78,7 +78,7 @@ export async function getShiftsForWeek(
 
   const { data: shifts, error } = await sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable, schedule_id')
     .gte('shift_date', startDate)
     .lte('shift_date', endDate)
     .order('start_time', { ascending: true });
@@ -122,6 +122,7 @@ export async function getShiftsForWeek(
     pharmacyIds: pharmaciesByShift.get(s.id) ?? [],
     institutionIds: institutionsByShift.get(s.id) ?? [],
     timingReliable: s.timing_reliable ?? false,
+    scheduleId: s.schedule_id ?? null,
   }));
 }
 
@@ -171,10 +172,29 @@ export async function createShift(input: NewShiftInput): Promise<string> {
 // ── Verwijderen (stap: planners) ────────────────────────────────────────────
 // Eén delete op shifts; shift_pharmacies en shift_institutions ruimen zichzelf
 // op via ON DELETE CASCADE (zie migratie 001).
+// Kwam de dienst uit een rooster (schedule_id), dan leggen we de datum vast als
+// exception, zodat de generator hem NIET opnieuw aanmaakt (feestdag/vakantie).
+// Dit is de expliciete koerier-/planneractie; systeem-opschoningen (deactiveren,
+// hergenereren) gebruiken removeFutureScheduleDrafts en slaan géén exception op.
 export async function deleteShift(shiftId: string): Promise<void> {
   const sb = requireClient();
-  const { error } = await sb.from('shifts').delete().eq('id', shiftId);
+  const { data, error } = await sb
+    .from('shifts')
+    .delete()
+    .eq('id', shiftId)
+    .select('schedule_id, shift_date')
+    .maybeSingle();
   if (error) throw error;
+
+  if (data?.schedule_id) {
+    const { error: exErr } = await sb
+      .from('schedule_exceptions')
+      .upsert(
+        { schedule_id: data.schedule_id, exception_date: data.shift_date },
+        { onConflict: 'schedule_id,exception_date', ignoreDuplicates: true },
+      );
+    if (exErr) throw exErr;
+  }
 }
 
 // ── Wijzigen ────────────────────────────────────────────────────────────────

@@ -54,7 +54,26 @@ export interface Shift {
   institutionIds: string[];
   // Planner-assertie dat de tijden bruikbaar zijn voor kalibratie (default false).
   timingReliable: boolean;
+  // Herkomst: gevuld = uit een roosterregel gegenereerd; null = handmatig.
+  scheduleId: string | null;
 }
+
+// Eén roosterregel (vaste, terugkerende dienst) voor een apotheek.
+export interface ScheduleLine {
+  id: string;
+  pharmacyId: string;
+  weekday: number;               // ISO 1=maandag .. 7=zondag
+  startTime: string;             // 'HH:MM'
+  budgetedEndTime: string | null;
+  courierId: string | null;
+  transportMode: TransportMode;
+  carIsOwn: boolean | null;
+  startDate: string;             // 'YYYY-MM-DD'
+  endDate: string | null;
+  isActive: boolean;
+}
+
+export type ScheduleLineInput = Omit<ScheduleLine, 'id' | 'isActive'>;
 
 // Payload voor het aanmaken van een dienst (stap C).
 export interface NewShiftInput {
