@@ -24,17 +24,20 @@ ijkbron.
 | Terugval-snelheid auto | `DEFAULT_SPEED_MPS.car` | 7.0 m/s (~25 km/u) | **Plaatshouder**, niet uit data | Idem |
 | GPS-nulmarge | `GPS_ZERO_EPS` | 0.0001 | Technische sentinel (toestel schrijft (0,0)) | n.v.t. — geen kalibratie-parameter |
 
-## Gevoeligheid (gemeten, 522 echte bezorgingen)
+## Gevoeligheid (gemeten, 348 bezorgingen)
 
 De terugval-snelheid raakt **alleen de terugreis** (laatste deur → apotheek), niet
 de gemeten bezorgtijden of de marges, en alleen bij diensten zonder eigen
-(measured) snelheid. Bij een fout van 4→3 m/s:
+(measured) snelheid. Gemeten over 348 bezorgingen ná uitsluiten van het testaccount
+(90ae1c75, 211 bezorgingen) en seed ph-1 (161); geen datumgrens. Bij een fout 4→3 m/s:
 
-| deur→apotheek | median 1,28 km | p75 2,49 km | p90 9,25 km |
-|---|---|---|---|
-| extra eindtijd | +2,3 min | +4,5 min | +16,7 min |
+| deur→apotheek | median 1,20 km | p75 1,94 km | p90 3,93 km | max 16,9 km |
+|---|---|---|---|---|
+| extra eindtijd | +2,2 min | +3,5 min | +7,1 min | |
 
-Klein op een typische stadsdienst; materieel in de staart (lange laatste benen).
+Klein over de hele linie (enkele minuten, ook in de p90). De eerdere "materiële
+staart" (p90 9,3 km, +16,7 min) bleek grotendeels het testaccount — precies waarom
+vermenging vooruit gelabeld moet worden i.p.v. op afstand geschat.
 
 ## Data-hygiëne (geen parameter)
 
