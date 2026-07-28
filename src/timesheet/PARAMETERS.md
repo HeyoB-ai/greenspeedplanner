@@ -48,6 +48,12 @@ ontbrekende coördinaten. Verweesde-courier-pakketten (courierId zonder
 `user_profile`; in totaal 384 over Test/Mijn Apotheek) worden sowieso nooit aan een
 dienst gekoppeld omdat `shifts.courier_id` een FK naar `user_profiles` is.
 
+**Gedeelde dag (meerdere diensten, zelfde koerier):** als de apotheeksets van die
+diensten disjunct zijn, splitst de kalibratie de pakketten op de apotheek(en) van
+elke dienst en legt dat vast in `calc_details.attribution` (geen plaatshouder —
+puur op basis van `pharmacyId`). Overlappen de apotheeksets, dan kan de toewijzing
+niet eenduidig en gaat de dienst naar `disputed:meerdere_diensten_zelfde_dag`.
+
 ## Werkwijze
 
 Wijzig een waarde alléén in `constants.ts`, verhoog `MODEL_VERSION`, en noteer de

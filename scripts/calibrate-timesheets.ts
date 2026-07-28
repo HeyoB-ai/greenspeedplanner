@@ -155,7 +155,19 @@ async function main() {
     const linkageAmbiguous = disambiguate(shift, sameDay, pharmaciesByShift);
 
     // Pakketten van seed-apotheken uit de scandata weren.
-    const pkgs = (pkgByCourierDate.get(key) ?? []).filter((p) => !EXCLUDED_PHARMACIES.has(p.pharmacyId));
+    let pkgs = (pkgByCourierDate.get(key) ?? []).filter((p) => !EXCLUDED_PHARMACIES.has(p.pharmacyId));
+
+    // Gedeelde dag met DISJUNCTE apotheken (niet ambigu): splits de pakketten op
+    // de apotheek(en) van déze dienst, zodat we niet met de hele-dag-set rekenen
+    // en plausibel-ogende foute tijden krijgen. (Overlappen de apotheeksets →
+    // linkageAmbiguous=true → het model disput.) Leg de split vast in calc_details.
+    let attribution: { splitByPharmacy: boolean; pharmacies: string[] } | undefined;
+    if (sameDay.length > 1 && !linkageAmbiguous) {
+      const set = new Set(shiftPhs);
+      pkgs = pkgs.filter((p) => set.has(p.pharmacyId));
+      attribution = { splitByPharmacy: true, pharmacies: shiftPhs };
+    }
+
     const sorted = [...pkgs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const firstInscanAt = sorted.length ? sorted[0].createdAt : null;
 
@@ -179,6 +191,7 @@ async function main() {
       transportMode,
       linkageAmbiguous,
       fallback: { level: 'national', speedMps: DEFAULT_SPEED_MPS[transportMode] },
+      attribution,
     };
     results.push({ shift, result: computeShiftTime(input) });
   }
@@ -271,6 +284,9 @@ function report(results: { shift: any; result: ReturnType<typeof computeShiftTim
 
   console.log('\nSnelheidsbron:');
   for (const [k, v] of speedSources) console.log(`  ${k.padEnd(10)} ${v}`);
+
+  const splitCount = results.filter((x) => x.result.calcDetails.attribution?.splitByPharmacy).length;
+  console.log(`\nGedeelde dag, pakketten gesplitst op apotheek: ${splitCount}`);
 
   console.log('\nBerekende terugreistijd (sec):   ' + dist(returnSecs, 's'));
   console.log('Berekende dienstduur (min):      ' + dist(computedDurations, 'min'));

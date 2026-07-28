@@ -33,6 +33,9 @@ export interface ComputeInput {
   transportMode: TransportMode;
   linkageAmbiguous: boolean;             // scans niet eenduidig aan één dienst te koppelen
   fallback?: SpeedFallback;              // gebruikt als er te weinig eigen trajecten zijn
+  // Gezet als deze dienst er meerdere op één dag deelt en de pakketten eenduidig
+  // op apotheek gesplitst zijn (zie de kalibratie). Puur voor herleidbaarheid.
+  attribution?: { splitByPharmacy: boolean; pharmacies: string[] };
 }
 
 export interface CalcGap {
@@ -60,6 +63,9 @@ export interface CalcDetails {
   returnSec: number | null;
   windowHours: number | null;
   gaps: CalcGap[];
+  // Herkomst van de pakket-toewijzing bij een gedeelde dag: gesplitst op welke
+  // apotheken. null = geen split (enkele dienst die dag).
+  attribution: { splitByPharmacy: boolean; pharmacies: string[] } | null;
   notes: string[];
 }
 
@@ -100,6 +106,7 @@ export function computeShiftTime(input: ComputeInput): ComputeResult {
     returnSec: null,
     windowHours: null,
     gaps: [],
+    attribution: input.attribution ?? null,
     notes,
   };
 
