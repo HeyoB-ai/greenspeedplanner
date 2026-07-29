@@ -136,7 +136,16 @@ planwerk.
 
 1. **Brevo** — registreer de afzender-ID `Greenspeed` voor Nederland
    (verplicht voor accounts van ná 13 maart 2026, en er zit doorlooptijd in) en
-   koop SMS-credits. API-sleutel via SMTP & API → API keys.
+   koop SMS-credits. Twee dingen die anders misgaan:
+
+   * **De juiste sleutel.** Neem een API-sleutel van het type `xkeysib-…` uit
+     **SMTP & API → API keys**. De sleutel uit het SMTP-tabblad (`xsmtpsib-…`)
+     werkt niet voor deze API en geeft `Brevo 401: Key not found`.
+   * **IP-blokkering uit.** Staat er onder
+     [app.brevo.com/security/authorised_ips](https://app.brevo.com/security/authorised_ips)
+     een IP-lijst aan, zet die dan uit. Een Edge Function heeft een wisselend
+     uitgaand IP en valt er dus altijd buiten; de foutmelding is
+     `unrecognised IP address`.
 2. **CLI koppelen** (eenmalig, in deze projectmap):
    ```powershell
    npx supabase init      # maakt alleen supabase/config.toml aan; migraties blijven
@@ -144,7 +153,7 @@ planwerk.
    ```
 3. **Secrets zetten:**
    ```powershell
-   npx supabase secrets set BREVO_API_KEY=<sleutel> SMS_SENDER=Greenspeed CRON_SECRET=<willekeurige string>
+   npx supabase secrets set BREVO_API_KEY=xkeysib-<sleutel> SMS_SENDER=Greenspeed CRON_SECRET=<willekeurige string>
    ```
    `SUPABASE_URL` en `SUPABASE_SERVICE_ROLE_KEY` zet Supabase zelf al klaar.
 4. **Deployen:**
@@ -184,7 +193,7 @@ planwerk.
 
 | Variabele | Standaard | Waarvoor |
 |---|---|---|
-| `BREVO_API_KEY` | — | verplicht, behalve in dry run |
+| `BREVO_API_KEY` | — | verplicht, behalve in dry run; type `xkeysib-…` |
 | `SMS_SENDER` | `Greenspeed` | alfanumerieke afzender (3–11 tekens) |
 | `SMS_WINDOW_HOURS` | `24` | hoe ver vooruit de sweep kijkt |
 | `SMS_MAX_PER_RUN` | `50` | veiligheidsrem; overschot komt de volgende run |
@@ -210,4 +219,17 @@ DELETE FROM public.shift_sms_log WHERE shift_id = '<uuid>';
   afspraak — telefonisch afstemmen.
 * **Concept dat laat bevestigd wordt** valt vanaf dat moment in de sweep; staat
   de dienst dan nog in de toekomst, dan gaat het bericht alsnog uit.
-* **Berichttekst is nog voorlopig** — hij staat op één plek, in `buildMessage()`.
+* **Berichttekst** staat op één plek, in `buildMessage()`:
+
+  > Reminder: je bent ingepland op do 30-07 19:12 bij Lamberts Apotheek. Vragen
+  > of verhinderd? Bel de planning. Je kunt niet antwoorden op deze SMS
+
+  Accentloos houden — `toGsm7()` haalt accenten er automatisch uit, want één
+  accent zet het hele bericht om naar Unicode en dan is een segment nog 70
+  tekens in plaats van 160. Er wordt **niet** afgekapt: twee segmenten mag, dat
+  kost een tweede credit.
+* **Meerdere apotheken** worden allemaal genoemd, als zin: "bij A en B",
+  "bij A, B en C". Met één naam is het bericht ~143 tekens, dus er is zo'n 17
+  tekens speling binnen het eerste segment; vanaf twee namen loopt het richting
+  de tweede. De dry run toont per bericht `chars`, `segments` en `encoding`, en
+  in de samenvatting `segments_total` — het aantal credits dat die run kost.

@@ -45,21 +45,36 @@ interface DueShift {
 }
 
 // ── Berichttekst ─────────────────────────────────────────────────────────
-// VOORLOPIG — de definitieve tekst is nog niet vastgesteld. Dit is de enige
-// plek waar hij staat; aanpassen kan zonder de rest te raken.
+// Definitief. Dit is de enige plek waar hij staat; aanpassen kan zonder de
+// rest te raken.
 //
-// Randvoorwaarden die wél vastliggen:
-//   * Eén SMS-segment is 160 tekens in GSM-7. Eén accent (é, ï) zet het hele
-//     bericht om naar Unicode en dan is het 70 per segment — vandaar dat we
-//     accenten weghalen in plaats van erop te hopen.
+// Randvoorwaarden:
+//   * Géén accenttekens. Eén accent zet het hele bericht om naar Unicode en dan
+//     is een segment nog 70 tekens in plaats van 160. toGsm7() haalt ze eruit,
+//     zodat een apotheeknaam dat niet stilzwijgend kan veroorzaken.
+//   * Twee segmenten mag — er wordt bewust NIET afgekapt. Bij een dienst met
+//     meerdere apotheken worden alle namen genoemd; het bericht wordt dan
+//     langer en kost eventueel een tweede credit. Liever dat dan een koerier
+//     die op de verkeerde plek staat omdat de tweede naam is weggevallen.
 //   * Geen patiëntgegevens.
 //   * De afzender is alfanumeriek, dus de koerier kan niet terug-sms'en. Dat
-//     moet in de tekst staan, anders sms't iemand terug het niets in.
+//     staat in de tekst, anders sms't iemand terug het niets in.
 function buildMessage(s: DueShift): string {
   const when = formatWhen(s.start_at);
-  const where = s.pharmacy_names.length > 0 ? s.pharmacy_names.join(' + ') : 'de apotheek';
-  const text = `Greenspeed: dienst ${when} bij ${where}. Vragen of verhinderd? Bel de planning. Niet antwoorden op deze sms.`;
-  return truncate(toGsm7(text), 160);
+  const where = joinNames(s.pharmacy_names);
+  return toGsm7(
+    `Reminder: je bent ingepland op ${when} bij ${where}. `
+    + `Vragen of verhinderd? Bel de planning. Je kunt niet antwoorden op deze SMS`,
+  );
+}
+
+// 'A', 'A en B', 'A, B en C' — leest als een zin, i.t.t. een opsomming met
+// plussen. Een dienst zonder gekoppelde apotheek zou niet moeten bestaan, maar
+// levert hier 'de apotheek' op in plaats van een gat in de zin.
+function joinNames(names: string[]): string {
+  if (names.length === 0) return 'de apotheek';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} en ${names[names.length - 1]}`;
 }
 
 // 'di 12-08 07:45' in Nederlandse tijd. De starttijd staat als lokale tijd in de
@@ -90,8 +105,23 @@ function toGsm7(s: string): string {
     .replace(/\u2026/g, '...');
 }
 
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : `${s.slice(0, max - 1)}.`;
+// Lengte en segmenten van een bericht, voor de dry run. Eén segment is 160
+// tekens in GSM-7; zodra er een tweede bij komt zakt de ruimte naar 153 per
+// segment, want er gaat een koppelkop mee. Staat er tóch een teken in dat niet
+// in GSM-7 past, dan wordt het hele bericht Unicode: 70, daarna 67.
+// (Benadering: de handvol GSM-7 'extended' tekens — { } [ ] ~ ^ | \ € — telt in
+// werkelijkheid voor twee. Die komen in apotheeknamen niet voor.)
+const GSM7 =
+  '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡'
+  + 'ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
+const GSM7_SET = new Set([...GSM7, ...'{}[]~^|\\€']);
+
+function messageInfo(text: string): { chars: number; segments: number; unicode: boolean } {
+  const unicode = [...text].some((ch) => !GSM7_SET.has(ch));
+  const single = unicode ? 70 : 160;
+  const multi  = unicode ? 67 : 153;
+  const chars = [...text].length;
+  return { chars, segments: chars <= single ? 1 : Math.ceil(chars / multi), unicode };
 }
 
 // ── Brevo ────────────────────────────────────────────────────────────────
@@ -175,7 +205,19 @@ Deno.serve(async (req) => {
     const content = buildMessage(s);
 
     if (dryRun) {
-      results.push({ shift: s.shift_id, courier: s.courier_name, to: s.phone_e164, content });
+      // Lengte en segmenten meesturen: zo zie je vóór het versturen precies wat
+      // eruit gaat en wat het kost (elk segment is een credit).
+      const info = messageInfo(content);
+      results.push({
+        shift: s.shift_id,
+        courier: s.courier_name,
+        to: s.phone_e164,
+        pharmacies: s.pharmacy_names,
+        chars: info.chars,
+        segments: info.segments,
+        encoding: info.unicode ? 'unicode (70/67 per segment)' : 'gsm-7 (160/153 per segment)',
+        content,
+      });
       continue;
     }
 
@@ -225,6 +267,11 @@ Deno.serve(async (req) => {
     sent,
     failed,
     skipped,
+    // Elk segment is een credit; bij tweesegmentsberichten wijkt dit af van het
+    // aantal berichten.
+    segments_total: dryRun
+      ? results.reduce((n, r) => n + (r.segments as number ?? 0), 0)
+      : undefined,
     results: dryRun ? results : undefined,
   };
   console.log('[sms]', JSON.stringify({ ...summary, results: undefined }));
