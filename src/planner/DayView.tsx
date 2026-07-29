@@ -1,7 +1,8 @@
-import { AlertTriangle, ArrowLeft, Bike, Car, CheckCircle2, MapPin, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
-import { Shift } from '../types';
+import { AlertTriangle, ArrowLeft, Bike, Car, CheckCircle2, MapPin, MessageSquare, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
+import { Shift, SmsLogEntry } from '../types';
 import { ConflictOther, ShiftConflict } from './conflicts';
 import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG } from './constants';
+import { SMS_ICON_CLASS, SMS_LABELS, formatSentAt } from './sms';
 
 interface Props {
   date: Date;
@@ -13,10 +14,11 @@ interface Props {
   onDelete: (shift: Shift) => void;
   onConfirm: (shift: Shift) => void;
   conflicts: Map<string, ShiftConflict>;
+  smsLog: Map<string, SmsLogEntry>;
 }
 
 // Ingezoomde dagweergave met meer detail per dienst.
-export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm, conflicts }: Props) {
+export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm, conflicts, smsLog }: Props) {
   const describeOther = (o: ConflictOther) => {
     const time = o.endTime ? `${o.startTime}–${o.endTime}` : o.startTime;
     const phs = o.pharmacyIds.map((id) => pharmacyNames.get(id) ?? id).join(', ');
@@ -44,6 +46,7 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
           const time = s.budgetedEndTime ? `${s.startTime}–${s.budgetedEndTime}` : s.startTime;
           const isDraft = s.status === 'draft';
           const conflict = conflicts.get(s.id);
+          const sms = smsLog.get(s.id);
           return (
             <div key={s.id} className={`rounded-lg border ${style.border} bg-white p-3 ${isDraft ? 'border-dashed' : ''}`}>
               <div className="flex items-center justify-between">
@@ -107,6 +110,24 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
 
               {s.description && (
                 <p className="mt-2 text-sm text-slate-500 italic">{s.description}</p>
+              )}
+
+              {/* Herinnerings-SMS. Alleen tonen als er een logrij is: geen rij
+                  betekent "nog niet aan de beurt" (verder dan 24 uur weg), en
+                  dat is de normale toestand — daar hoort geen melding bij. */}
+              {sms && (
+                <div className="mt-2 flex items-start gap-1.5 text-sm">
+                  <MessageSquare size={14} className={`mt-0.5 shrink-0 ${SMS_ICON_CLASS[sms.status]}`} />
+                  <span className="text-slate-600">
+                    {SMS_LABELS[sms.status]}
+                    {sms.status === 'sent' && sms.sentAt && (
+                      <span className="text-slate-400"> · {formatSentAt(sms.sentAt)} naar {sms.phoneE164}</span>
+                    )}
+                    {sms.status === 'failed' && sms.error && (
+                      <span className="block text-xs text-red-600">{sms.error}</span>
+                    )}
+                  </span>
+                </div>
               )}
 
               <div className="mt-3 flex justify-end gap-2 border-t border-slate-100 pt-2">

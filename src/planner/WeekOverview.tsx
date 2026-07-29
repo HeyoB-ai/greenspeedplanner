@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
-import { Courier, Pharmacy, Shift } from '../types';
+import { Courier, Pharmacy, Shift, SmsLogEntry } from '../types';
 import { confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
+import { getSmsStatusForShifts } from './smsService';
 import {
   addDays, formatDayHeader, isoWeekNumber, startOfWeek, toISODate, weekDays,
 } from './dates';
@@ -35,6 +36,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [smsLog, setSmsLog] = useState<Map<string, SmsLogEntry>>(new Map());
   const [institutionNames, setInstitutionNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -72,7 +74,17 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     let cancelled = false;
     setLoading(true);
     getShiftsForWeek(weekStartISO, weekEndISO)
-      .then((rows) => { if (!cancelled) { setShifts(rows); setError(''); } })
+      .then((rows) => {
+        if (cancelled) return;
+        setShifts(rows);
+        setError('');
+        // Verstuurstatus van de herinnerings-SMS erbij. Bewust een aparte,
+        // niet-blokkerende query: valt hij om, dan blijft het weekoverzicht
+        // gewoon werken — alleen de SMS-markering ontbreekt dan.
+        return getSmsStatusForShifts(rows.map((r) => r.id))
+          .then((m) => { if (!cancelled) setSmsLog(m); })
+          .catch(() => { if (!cancelled) setSmsLog(new Map()); });
+      })
       .catch((e) => { if (!cancelled) setError(e?.message ?? 'Laden van diensten mislukt.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -168,6 +180,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
         onDelete={onDelete}
         onConfirm={(s) => handleConfirm([s.id])}
         conflicts={conflicts}
+        smsLog={smsLog}
       />
     );
   }
@@ -334,7 +347,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                       ) : (
                         <div className="space-y-1">
                           {cellShifts.map((s) => (
-                            <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} onClick={() => setSelectedDay(d)} />
+                            <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
                           ))}
                           <button
                             onClick={() => onCreate(p.id, dayISO)}

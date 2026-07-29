@@ -1,13 +1,14 @@
-import { AlertTriangle, Bike, Car, Repeat, UserCircle2, Users } from 'lucide-react';
-import { Shift } from '../types';
+import { AlertTriangle, Bike, Car, MessageSquare, Repeat, UserCircle2, Users } from 'lucide-react';
+import { Shift, SmsLogEntry } from '../types';
 import { ShiftConflict } from './conflicts';
 import { TYPE_STYLES } from './constants';
+import { SMS_ICON_CLASS, SMS_LABELS } from './sms';
 
 // Eén dienst als gekleurde chip in een cel. Kleur = type. Open dienst (geen
 // koerier) krijgt een gestreepte rand + "Open"-markering. Gedeelde dienst
 // (meerdere apotheken) krijgt een Users-indicatie.
 export default function ShiftChip(
-  { shift, conflict, onClick }: { shift: Shift; conflict?: ShiftConflict; onClick?: () => void },
+  { shift, conflict, sms, onClick }: { shift: Shift; conflict?: ShiftConflict; sms?: SmsLogEntry; onClick?: () => void },
 ) {
   const style = TYPE_STYLES[shift.shiftType];
   const isOpen = !shift.courierId;
@@ -25,7 +26,7 @@ export default function ShiftChip(
     <button
       type="button"
       onClick={onClick}
-      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isSchedule ? ' · uit rooster' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}`}
+      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isSchedule ? ' · uit rooster' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}${sms ? ` · ${SMS_LABELS[sms.status]}` : ''}`}
       className={[
         'w-full text-left rounded-md px-2 py-1 text-xs leading-tight',
         style.bg, style.text,
@@ -46,6 +47,7 @@ export default function ShiftChip(
         <span className="flex items-center gap-1 shrink-0">
           {conflictLevel === 'hard' && <AlertTriangle size={12} className="text-red-600" aria-label="Harde tijdoverlap" />}
           {conflictLevel === 'soft' && <AlertTriangle size={12} className="text-amber-500" aria-label="Samenloop zelfde dag" />}
+          {sms && <MessageSquare size={12} className={SMS_ICON_CLASS[sms.status]} aria-label={SMS_LABELS[sms.status]} />}
           {isSchedule && <Repeat size={12} aria-label="Uit rooster" />}
           {isShared && <Users size={12} aria-label="Gedeelde dienst" />}
           <TransportIcon size={12} aria-label={shift.transportMode} />
