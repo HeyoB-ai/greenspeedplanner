@@ -115,6 +115,49 @@ apotheek. Staat "Allow new users to sign up" in Supabase Auth uit, dan kan dat
 niet en maak je ze op dezelfde manier aan als hierboven, met rol `courier` en
 lege `pharmacy_ids`.
 
+## Bevestigingsmail (fase 5) — nog niet in gebruik
+
+Het ontwerp met alle redenen staat in [`docs/FASE5_MAIL_ONTWERP.md`](docs/FASE5_MAIL_ONTWERP.md).
+Migratie 016 zet de tabellen, triggers en `mail_sweep()` neer. **De verzender
+bestaat nog niet.**
+
+> ⚠️ **Zet de cron voor `mail_sweep()` nog NIET aan.** Zonder verzender lopen de
+> `pending`-rijen in `mail_outbox` op, en de eerste verzendrun stuurt dan alles in
+> één keer — dezelfde valkuil als de eerste SMS-run. Twee dingen moeten er eerst
+> zijn: `MAIL_ALLOWLIST` (zodat er alleen naar jouw eigen adressen gaat zolang het
+> testdomein in gebruik is) en de mogelijkheid om de outbox te bekijken.
+
+Draaien van 016 zelf is veilig: de migratie sluit af met een **vulling** die voor
+elke al bevestigde dienst een aankondiging inschrijft *zonder* outbox-rijen. Een
+eerste `mail_sweep()` levert daarna nul berichten op; alleen wat je ná de migratie
+bevestigt of wijzigt komt in de outbox.
+
+Wat er klaarstaat, bekijk je zo:
+
+```sql
+SELECT o.created_at, o.kind, up.name AS koerier, o.status,
+       o.payload->'shifts' AS diensten, o.payload->>'reason' AS reden
+FROM public.mail_outbox o
+JOIN public.user_profiles up ON up.id = o.courier_id
+WHERE o.status = 'pending'
+ORDER BY o.courier_id, o.created_at;
+```
+
+Opruimen mag zolang er niets verstuurd is — de sweep schrijft niets terug dat
+verloren gaat, maar de aankondiging blijft staan, dus het bericht komt níet
+opnieuw:
+
+```sql
+DELETE FROM public.mail_outbox WHERE status = 'pending';
+```
+
+Wil je de aankondigingen óók terugzetten zodat alles opnieuw gemeld wordt (alleen
+tijdens het inregelen zinvol):
+
+```sql
+DELETE FROM public.courier_announcements;   -- eerstvolgende sweep meldt alles opnieuw
+```
+
 ## Scripts
 
 Eenmalige/beheerscripts in `scripts/`. Ze praten met de gedeelde database via de

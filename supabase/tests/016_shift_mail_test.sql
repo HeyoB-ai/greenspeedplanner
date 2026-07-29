@@ -24,6 +24,7 @@
 --   7. Dienst verwijderen                      → afmelding met gekopieerde gegevens
 --   8. Koerierwissel                           → afmelding voor de OUDE koerier
 --   9. Sweep twee keer draaien                 → geen extra berichten
+--  10. Aanpassen en terugzetten                → geen bericht, én de vlag gewist
 -- ════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -225,6 +226,38 @@ BEGIN
     RAISE EXCEPTION 'GEVAL 9 GEFAALD: een tweede sweep zonder wijzigingen leverde % extra bericht(en) op.', v_mails - v_before;
   END IF;
   RAISE NOTICE 'GEVAL 9 geslaagd: een sweep zonder wijzigingen doet niets.';
+
+  -- ── GEVAL 10: ingreep die per saldo niets verandert ───────────────────
+  -- Aanpassen en terugzetten binnen één sweep-interval: de vlag staat, maar
+  -- V = C. Er hoort geen bericht uit te gaan, én de vlag moet gewist worden —
+  -- anders wordt de eerstvolgende versmalling door tijdsverloop als ingreep
+  -- gelezen en gaat er alsnog een bericht uit.
+  SELECT count(*) INTO v_before FROM public.mail_outbox
+   WHERE subject_id = v_sched AND courier_id = v_courier;
+
+  UPDATE public.shifts SET start_time = '09:00' WHERE id = v_s2;
+  UPDATE public.shifts SET start_time = '07:45' WHERE id = v_s2;
+
+  SELECT dirtied_at INTO v_dirty FROM public.courier_announcements
+   WHERE subject_id = v_sched AND courier_id = v_courier AND superseded_at IS NULL;
+  IF v_dirty IS NULL THEN
+    RAISE EXCEPTION 'GEVAL 10 ONBRUIKBAAR: de vlag staat niet, dus er valt niets te toetsen.';
+  END IF;
+
+  PERFORM public.mail_sweep();
+
+  SELECT count(*) INTO v_mails FROM public.mail_outbox
+   WHERE subject_id = v_sched AND courier_id = v_courier;
+  IF v_mails <> v_before THEN
+    RAISE EXCEPTION 'GEVAL 10 GEFAALD: aanpassen-en-terugzetten leverde een bericht op (% i.p.v. %).', v_mails, v_before;
+  END IF;
+
+  SELECT dirtied_at INTO v_dirty FROM public.courier_announcements
+   WHERE subject_id = v_sched AND courier_id = v_courier AND superseded_at IS NULL;
+  IF v_dirty IS NOT NULL THEN
+    RAISE EXCEPTION 'GEVAL 10 GEFAALD: de vlag staat na de sweep nog steeds — elke volgende versmalling wordt dan als ingreep gelezen.';
+  END IF;
+  RAISE NOTICE 'GEVAL 10 geslaagd: geen bericht, en de vlag is gewist.';
 
   RAISE NOTICE 'ALLE GEVALLEN GESLAAGD — de ROLLBACK hierna draait de testdata terug.';
 END;

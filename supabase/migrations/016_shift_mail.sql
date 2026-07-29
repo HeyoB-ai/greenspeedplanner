@@ -361,10 +361,25 @@ $$;
 CREATE OR REPLACE FUNCTION public.mail_mark_dirty(p_shift_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_subj RECORD; v_courier UUID; v_status TEXT;
+DECLARE
+  v_subj    RECORD;
+  v_courier UUID;
+  v_status  TEXT;
+  v_date    DATE;
+  v_time    TIME;
+  v_rows    INT;
 BEGIN
-  SELECT courier_id, status INTO v_courier, v_status FROM public.shifts WHERE id = p_shift_id;
-  IF v_courier IS NULL OR v_status <> 'planned' THEN RETURN; END IF;
+  SELECT courier_id, status, shift_date, start_time
+    INTO v_courier, v_status, v_date, v_time
+  FROM public.shifts WHERE id = p_shift_id;
+
+  -- Geen koerier, geen bevestigde dienst, of al begonnen: niets te melden. Het
+  -- laatste sluit ook de cascade bij een verwijderde dienst af — dan bestaat de
+  -- rij hier al niet meer en valt v_courier op NULL.
+  IF v_courier IS NULL OR v_status <> 'planned'
+     OR NOT public.mail_is_upcoming(v_date, v_time) THEN
+    RETURN;
+  END IF;
 
   SELECT * INTO v_subj FROM public.mail_subject_of(p_shift_id);
   IF v_subj.subject_id IS NULL THEN RETURN; END IF;
@@ -375,6 +390,22 @@ BEGIN
      AND subject_id   = v_subj.subject_id
      AND courier_id   = v_courier
      AND superseded_at IS NULL;
+
+  -- Nul rijen betekent dat er op dit moment geen actieve aankondiging was. Dat
+  -- kan een echte "nog nooit gemeld"-situatie zijn (dan doet de sweep het werk
+  -- straks toch), maar het kan óók zijn dat de sweep deze aankondiging net
+  -- supersedeerde terwijl wij op de rijvergrendeling stonden te wachten: na zijn
+  -- commit voldoet die rij niet meer aan superseded_at IS NULL en zou de vlag
+  -- verloren gaan. Eén herhaling raakt dan de rij die inmiddels actief is.
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    UPDATE public.courier_announcements
+       SET dirtied_at = now()
+     WHERE subject_type = v_subj.subject_type
+       AND subject_id   = v_subj.subject_id
+       AND courier_id   = v_courier
+       AND superseded_at IS NULL;
+  END IF;
 END;
 $$;
 
@@ -393,19 +424,28 @@ CREATE TRIGGER mail_shift_dirty
   ON public.shifts
   FOR EACH ROW EXECUTE FUNCTION public.mail_shift_dirty_trg();
 
--- Apotheken horen bij de variant, dus een wijziging daarin is ook een ingreep.
+-- Apotheken horen bij de variant, dus een apotheek toevoegen aan of weghalen uit
+-- een bevestigde dienst is een ingreep. De app doet dat altijd als DELETE +
+-- INSERT (syncJunction in plannerService.ts), maar via losse SQL kan een
+-- koppelrij ook bijgewerkt worden — vandaar ook UPDATE, en dan beide kanten,
+-- want zo'n rij kan van de ene dienst naar de andere verhuizen.
 CREATE OR REPLACE FUNCTION public.mail_pharmacy_dirty_trg()
 RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  PERFORM public.mail_mark_dirty(COALESCE(NEW.shift_id, OLD.shift_id));
-  RETURN COALESCE(NEW, OLD);
+  IF TG_OP <> 'INSERT' THEN
+    PERFORM public.mail_mark_dirty(OLD.shift_id);
+  END IF;
+  IF TG_OP <> 'DELETE' AND (TG_OP = 'INSERT' OR NEW.shift_id IS DISTINCT FROM OLD.shift_id) THEN
+    PERFORM public.mail_mark_dirty(NEW.shift_id);
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$;
 
 DROP TRIGGER IF EXISTS mail_shift_pharmacy_dirty ON public.shift_pharmacies;
 CREATE TRIGGER mail_shift_pharmacy_dirty
-  AFTER INSERT OR DELETE ON public.shift_pharmacies
+  AFTER INSERT OR UPDATE OR DELETE ON public.shift_pharmacies
   FOR EACH ROW EXECUTE FUNCTION public.mail_pharmacy_dirty_trg();
 
 
