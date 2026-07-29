@@ -86,16 +86,15 @@ export async function deactivateSchedule(id: string): Promise<void> {
   await removeFutureScheduleDrafts(id);
 }
 
-// Systeem-opschoning: verwijdert de toekomstige concepten van een regel ZONDER
-// een exception vast te leggen (i.t.t. deleteShift, de handmatige planneractie).
+// Systeem-opschoning via de RPC (migratie 010): verwijdert de toekomstige
+// concepten van een regel binnen één transactie die zichzelf als opschoning
+// markeert, zodat de delete-trigger géén exception vastlegt (i.t.t. de
+// handmatige deleteShift). Bewust géén losse client-delete: dan zou het
+// markeren en het verwijderen in twee transacties vallen en de markering niets
+// meer betekenen.
 async function removeFutureScheduleDrafts(scheduleId: string): Promise<void> {
   const sb = requireClient();
-  const { error } = await sb
-    .from('shifts')
-    .delete()
-    .eq('schedule_id', scheduleId)
-    .eq('status', 'draft')
-    .gte('shift_date', toISODate(new Date()));
+  const { error } = await sb.rpc('remove_future_schedule_drafts', { p_schedule_id: scheduleId });
   if (error) throw error;
 }
 
@@ -113,7 +112,7 @@ export async function generateScheduleShifts(): Promise<number> {
 // niet opnieuw hoeft te draaien.
 export async function topUpScheduleWindow(): Promise<number> {
   const sb = requireClient();
-  const windowEnd = toISODate(addDays(new Date(), HORIZON_WEEKS * 7));
+  const windowEnd = scheduleHorizonEndISO();
   const { data, error } = await sb
     .from('schedule_generation_state')
     .select('filled_through')
@@ -121,4 +120,22 @@ export async function topUpScheduleWindow(): Promise<number> {
   if (error) throw error;
   if (data?.filled_through && data.filled_through >= windowEnd) return 0;
   return generateScheduleShifts();
+}
+
+// Einddatum van het meelopende roostervenster (vandaag + horizon).
+export function scheduleHorizonEndISO(): string {
+  return toISODate(addDays(new Date(), HORIZON_WEEKS * 7));
+}
+
+// Laatst bekende feestdag — voor de waarschuwing als de horizon daar voorbij reikt.
+export async function getMaxHolidayDate(): Promise<string | null> {
+  const sb = requireClient();
+  const { data, error } = await sb
+    .from('holidays')
+    .select('holiday_date')
+    .order('holiday_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.holiday_date ?? null;
 }

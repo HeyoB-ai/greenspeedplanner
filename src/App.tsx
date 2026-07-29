@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CalendarClock, LogOut, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarClock, LogOut, RefreshCw, Trash2 } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -8,7 +8,7 @@ import WeekOverview from './planner/WeekOverview';
 import ShiftForm from './planner/ShiftForm';
 import PharmacySchedule from './planner/PharmacySchedule';
 import { deleteShift } from './planner/plannerService';
-import { topUpScheduleWindow } from './planner/scheduleService';
+import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
 import { TYPE_STYLES } from './planner/constants';
 
 // Eén formulier-doel voor zowel aanmaken als bewerken. Het openen van dit
@@ -26,6 +26,7 @@ export default function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [scheduleTarget, setScheduleTarget] = useState<{ id: string; name: string } | null>(null);
+  const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function App() {
     topUpScheduleWindow()
       .then((created) => { if (created > 0) setRefreshSignal((n) => n + 1); })
       .catch(() => { /* stil: generatie is niet kritisch voor het laden */ });
+    getMaxHolidayDate().then(setMaxHoliday).catch(() => {});
   }, [user]);
 
   async function confirmDelete() {
@@ -121,6 +123,21 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* De generator slaat alleen feestdagen over die in `holidays` staan. Reikt het
+          roostervenster voorbij de laatst bekende feestdag, dan plant hij daarna
+          stilzwijgend op feestdagen door — vandaar deze waarschuwing. Datums bewust in
+          ISO: dat is precies de notatie die de planner in `holidays` moet invullen. */}
+      {maxHoliday && scheduleHorizonEndISO() > maxHoliday && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-sm px-4 py-2 flex items-start gap-2">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            Het roostervenster loopt t/m <strong>{scheduleHorizonEndISO()}</strong>, voorbij de laatst bekende
+            feestdag (<strong>{maxHoliday}</strong>). Feestdagen ná die datum worden als werkdag ingepland —
+            vul de <code>holidays</code>-tabel aan.
+          </span>
+        </div>
+      )}
 
       <WeekOverview
         onCreate={(pharmacyId, dateISO) => setFormTarget({ mode: 'create', pharmacyId, dateISO })}

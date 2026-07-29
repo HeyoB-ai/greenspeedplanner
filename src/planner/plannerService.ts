@@ -214,30 +214,14 @@ export async function createShift(input: NewShiftInput): Promise<string> {
 
 // ── Verwijderen (stap: planners) ────────────────────────────────────────────
 // Eén delete op shifts; shift_pharmacies en shift_institutions ruimen zichzelf
-// op via ON DELETE CASCADE (zie migratie 001).
-// Kwam de dienst uit een rooster (schedule_id), dan leggen we de datum vast als
-// exception, zodat de generator hem NIET opnieuw aanmaakt (feestdag/vakantie).
-// Dit is de expliciete koerier-/planneractie; systeem-opschoningen (deactiveren,
-// hergenereren) gebruiken removeFutureScheduleDrafts en slaan géén exception op.
+// op via ON DELETE CASCADE (zie migratie 001). Kwam de dienst uit een rooster,
+// dan legt de DB-trigger (migratie 010) de datum vast als exception, zodat de
+// generator hem niet opnieuw aanmaakt. Systeem-opschoning gebruikt daarentegen
+// remove_future_schedule_drafts (suppressievlag) en laat géén exception achter.
 export async function deleteShift(shiftId: string): Promise<void> {
   const sb = requireClient();
-  const { data, error } = await sb
-    .from('shifts')
-    .delete()
-    .eq('id', shiftId)
-    .select('schedule_id, shift_date')
-    .maybeSingle();
+  const { error } = await sb.from('shifts').delete().eq('id', shiftId);
   if (error) throw error;
-
-  if (data?.schedule_id) {
-    const { error: exErr } = await sb
-      .from('schedule_exceptions')
-      .upsert(
-        { schedule_id: data.schedule_id, exception_date: data.shift_date },
-        { onConflict: 'schedule_id,exception_date', ignoreDuplicates: true },
-      );
-    if (exErr) throw exErr;
-  }
 }
 
 // ── Wijzigen ────────────────────────────────────────────────────────────────

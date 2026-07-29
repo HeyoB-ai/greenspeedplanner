@@ -32,6 +32,20 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `007_timing_reliable.sql` | `shifts.timing_reliable` (kalibratie-markering, default false) |
 | `008_cpa_privileged_read.sql` | planner leest volledige `courier_pharmacy_access` (koppelbron) |
 | `009_pharmacy_schedules.sql` | roosters per apotheek + feestdagen + generator-RPC + RLS |
+| `010_schedule_exception_trigger.sql` | delete-trigger (exception-vangnet) + `remove_future_schedule_drafts` RPC |
+
+Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
+niets toegepast.
+
+### Tests
+
+`supabase/tests/` bevat controles die je ná de bijbehorende migratie in dezelfde
+SQL Editor draait. Ze eindigen op `ROLLBACK` en laten niets in de database
+achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
+
+| Test | Controleert |
+|---|---|
+| `010_schedule_exception_trigger_test.sql` | levensduur van de suppressievlag + trigger/RPC-gedrag (rauwe delete legt wél een exception vast, de opschoon-RPC niet) |
 
 ## Scripts
 
