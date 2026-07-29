@@ -37,7 +37,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `012_shift_sms_log.sql` | `shift_sms_log` + `sms_due_shifts` / `sms_claim_shift` / `sms_record_result` |
 | `013_car_is_own_optional.sql` | car-CHECK vervalt op `shifts` en `pharmacy_schedules`; NULL = nog niet bekend |
 | `014_invitations_rls.sql` | RLS op `invitations`: geen publieke tokens meer, aanmaken alleen door bevoegden |
-| `015_signup_role_clamp.sql` | rol bij registratie afgeleid i.p.v. uit metadata geloofd (`resolve_signup_role`) |
+| `015_signup_role_clamp.sql` | registratie levert altijd een koerier op; accounts daarboven maak je zelf aan (zie de kop van de migratie) |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -53,9 +53,9 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `010_schedule_exception_trigger_test.sql` | levensduur van de suppressievlag + trigger/RPC-gedrag (rauwe delete legt wél een exception vast, de opschoon-RPC niet) |
 | `012_sms_log_test.sql` | selectie van de herinnerings-SMS (concept/begonnen/buiten venster/geen nummer) + claim precies één keer + tijdzonegrens |
 | `014_invitations_rls_test.sql` | koerier mag geen uitnodiging maken en ziet geen tokens; planner wél, inclusief de returning-select van `inviteUser` |
-| `015_signup_role_clamp_test.sql` | `role=superuser` uit metadata wordt courier; hoofdletters (`SUPERVISOR`) worden herkend; verlopen/gebruikte uitnodiging telt niet |
+| `015_signup_role_clamp_test.sql` | `role=superuser` uit metadata wordt courier; `pharmacy_ids` uit metadata genegeerd; zonder rol géén profiel |
 
-Beide tests uit 014/015 doen zich voor als een gewone gebruiker met
+`014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
 `SET LOCAL ROLE authenticated`. Zonder die rolwissel draai je als `postgres` en
 die omzeilt RLS volledig — de test slaagt dan altijd en bewijst niets.
 
