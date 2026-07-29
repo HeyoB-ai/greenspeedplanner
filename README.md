@@ -39,6 +39,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `014_invitations_rls.sql` | RLS op `invitations`: geen publieke tokens meer, aanmaken alleen door bevoegden |
 | `015_signup_role_clamp.sql` | registratie levert altijd een koerier op; accounts daarboven maak je zelf aan (zie de kop van de migratie) |
 | `016_shift_mail.sql` | bevestigingsmail: `courier_announcements` + `mail_outbox` + `mail_sweep()` + triggers + `email_override` |
+| `017_mail_dispatch.sql` | verzendkant: `mail_recipient_for` / `mail_pending_couriers` / `mail_claim_for_courier` / `mail_record_result` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -157,6 +158,83 @@ tijdens het inregelen zinvol):
 ```sql
 DELETE FROM public.courier_announcements;   -- eerstvolgende sweep meldt alles opnieuw
 ```
+
+### De verzender
+
+`supabase/functions/send-shift-mail/` leest de outbox, bundelt per koerier en
+verstuurt via Brevo. Vereist migratie 017.
+
+Per koerier: **eerst het adres bepalen, dan claimen.** Is er geen adres of staat
+het niet op de allowlist, dan wordt er niet geclaimd en blijven de berichten op
+`pending` staan — ze gaan gewoon mee zodra het adres er is of de beperking eraf
+gaat. Zou je eerst claimen, dan zou zo'n bundel als mislukt eindigen en nooit
+meer uitgaan.
+
+| Variabele | Standaard | Waarvoor |
+|---|---|---|
+| `BREVO_API_KEY` | — | verplicht, behalve in dry run; type `xkeysib-…` |
+| `MAIL_FROM` | — | afzenderadres, nu `planning@greenspeedkoeriers.nl` (**mét** s) |
+| `MAIL_FROM_NAME` | `Greenspeed Planning` | weergavenaam |
+| `MAIL_REPLY_TO` | — | optioneel; antwoorden komen anders op `MAIL_FROM` |
+| `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; **gevuld = alleen daarheen**. Leeg = alles gaat uit, en de functie logt dat bij elke run |
+| `MAIL_MAX_PER_RUN` | `25` | koeriers per run; overschot komt de volgende run |
+| `MAIL_DRY_RUN` | — | `1` = niets claimen, niets versturen |
+| `CRON_SECRET` | — | indien gezet, verplicht als header `x-cron-secret` |
+
+Uitrollen:
+
+```powershell
+npx supabase secrets set MAIL_FROM=planning@greenspeedkoeriers.nl `
+  MAIL_FROM_NAME="Greenspeed Planning" `
+  MAIL_ALLOWLIST="jouw@eigenadres.nl"
+npx supabase functions deploy send-shift-mail
+```
+
+Proefdraaien — laat per koerier het adres, de berichtsoorten, het onderwerp en de
+volledige tekst zien, zonder iets te claimen of te versturen:
+
+```powershell
+curl -X POST "https://<project-ref>.supabase.co/functions/v1/send-shift-mail?dry_run=1" `
+  -H "Authorization: Bearer <service-role-key>" -H "x-cron-secret: <CRON_SECRET>"
+```
+
+Cron aanzetten doe je pas als de dry run klopt én `MAIL_ALLOWLIST` staat. Twee
+schedules, want de sweep en de verzender zijn losse stappen:
+
+```sql
+SELECT cron.schedule('mail-sweep', '*/5 * * * *', $$
+  SELECT public.mail_sweep();
+$$);
+
+SELECT cron.schedule('mail-send', '2-59/5 * * * *', $$
+  SELECT net.http_post(
+    url     := 'https://<project-ref>.supabase.co/functions/v1/send-shift-mail',
+    headers := jsonb_build_object(
+                 'Authorization', 'Bearer <service-role-key>',
+                 'x-cron-secret', '<CRON_SECRET>',
+                 'Content-Type',  'application/json'),
+    body    := '{}'::jsonb);
+$$);
+```
+
+De verzender loopt twee minuten achter op de sweep, zodat een bundel compleet is
+voordat hij verstuurd wordt.
+
+### De zes berichtsoorten
+
+Alle tekst staat op één plek: `renderBlock()` en `subjectFor()` in de functie.
+Accentloos, en per blok staat er wat de koerier moet doen of weten. Een bundel
+krijgt één aanhef en één afsluiting, met een blok per feit in de volgorde waarin
+ze ontstonden.
+
+| Soort | Onderwerp | Kern van het blok |
+|---|---|---|
+| `schedule_confirmed` | Je vaste dienst staat vast | `Je staat vast ingepland:` + een regel per variant met ingangsdatum |
+| `schedule_changed` | Je vaste dienst is gewijzigd | `Dit staat er nu:` + alle varianten; de eerdere afgebakend (`van … t/m …`), de laatste open (`vanaf …`) |
+| `shift_confirmed` | Je bent ingepland op \<dag\> \<datum\> | `Je bent ingepland op donderdag 30-07-2026, 19:12-21:00 bij X, met de auto.` |
+| `shift_changed` | Je dienst van \<dag\> \<datum\> is gewijzigd | `Dit staat er nu: …` |
+| `shift_cancelled` | Je dienst van … vervalt / gaat naar een andere koerier | `Deze dienst vervalt: … Je hoeft niet te komen.` |
+| `schedule_cancelled` | Je vaste dienst vervalt | nog niet in gebruik; staat er zodat een onbekend feit geen lege mail oplevert |
 
 ## Scripts
 
