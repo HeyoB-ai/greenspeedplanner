@@ -12,11 +12,13 @@
 
 export const MODEL_VERSION = 'v1'; // versielabel (geen parameter); ophogen bij elke inhoudelijke wijziging hieronder
 
-// Voormarge (min): tijd vóór de eerste inscan — aankomst, uitpakken, klaarmaken
-// aan de balie.
-// [HERKOMST]      plaatshouder, niet uit data.
-// [BIJSTELLEN MET] mediaan van (door koerier bevestigde starttijd − eerste inscan),
-//                  zodra bevestigingen binnenkomen (Fase 3).
+// Voormarge (min): betaalde voorbereidingstijd vóór de eerste inscan — aankomst,
+// uitpakken, klaarmaken aan de balie.
+// [HERKOMST]      BEDRIJFSAFSPRAAK met de koeriers — geen schatting, dus ook geen
+//                 plaatshouder. Het aantal pakketten doet er niet toe: of er 2 of
+//                 200 klaarstaan, alleen het tijdstip van de eerste scan telt.
+// [BIJSTELLEN MET] n.v.t. — geen kalibratie-parameter. Wijzigt alleen als de
+//                  afspraak zelf wijzigt. Zie PARAMETERS.md.
 export const PRE_MARGIN_MIN = 15;
 
 // Afrondmarge (min): tijd ná terugkomst bij de apotheek — parkeren, afmelden.

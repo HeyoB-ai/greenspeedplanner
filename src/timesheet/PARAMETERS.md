@@ -1,11 +1,14 @@
 # Parameters van het rekenmodel diensttijd — herkomst & kalibratie
 
 Elk getal in de tijdberekening staat als benoemde constante in
-[`constants.ts`](./constants.ts) en wordt hieronder verantwoord. **Peildatum: nog
-géén enkele waarde is uit Greenspeed-data afgeleid** — het zijn plaatshouders,
-vuistregels of domein-aannames. Ze moeten geijkt worden zodra er genoeg
+[`constants.ts`](./constants.ts) en wordt hieronder verantwoord. **Peildatum: géén
+enkele waarde is uit Greenspeed-data afgeleid.** Op één na zijn het plaatshouders,
+vuistregels of domein-aannames die geijkt moeten worden zodra er genoeg
 *bevestigde* diensten zijn (zie de kalibratie-drempel: ~50 bevestigingen; de
 diensten­laag is nu nog testdata).
+
+De uitzondering is `PRE_MARGIN_MIN`. Dat is geen schatting maar een
+**bedrijfsafspraak** en wordt dus niet geijkt — zie de toelichting onder de tabel.
 
 De berekende tijd is een **voorstel** dat de koerier corrigeert; die correcties
 (`confirmed_*` vs `computed_*` in `shift_time_reports`) zijn de belangrijkste
@@ -13,7 +16,7 @@ ijkbron.
 
 | Parameter | Constante | Waarde | Herkomst | Bijstellen met |
 |---|---|---|---|---|
-| Voormarge | `PRE_MARGIN_MIN` | 15 min | Plaatshouder, niet uit data | Mediaan van (bevestigde starttijd − eerste inscan) |
+| Voormarge | `PRE_MARGIN_MIN` | 15 min | **Bedrijfsafspraak** — betaalde voorbereidingstijd vóór de eerste scan | n.v.t. — geen kalibratie-parameter |
 | Afrondmarge | `ROUND_MARGIN_MIN` | 10 min | Plaatshouder, niet uit data | Mediaan van (bevestigde eindtijd − (laatste deurscan + terugreis)) |
 | Omwegfactor | `DETOUR_FACTOR` | 1.3 | Gangbare stadsvuistregel | Werkelijke wegafstand (Routes API) ÷ hemelsbreed, over echte trajecten |
 | Min. trajectlengte | `MIN_LEG_DISTANCE_M` | 300 m | Heuristiek (GPS-ruis) | Regressie-residuen vs trajectlengte |
@@ -23,6 +26,19 @@ ijkbron.
 | Terugval-snelheid fiets | `DEFAULT_SPEED_MPS.bike` | 4.0 m/s (~14 km/u) | **Plaatshouder**, niet uit data | Gemeten per-dienst-snelheden, geaggregeerd apotheek→groep→landelijk |
 | Terugval-snelheid auto | `DEFAULT_SPEED_MPS.car` | 7.0 m/s (~25 km/u) | **Plaatshouder**, niet uit data | Idem |
 | GPS-nulmarge | `GPS_ZERO_EPS` | 0.0001 | Technische sentinel (toestel schrijft (0,0)) | n.v.t. — geen kalibratie-parameter |
+
+## Voormarge (`PRE_MARGIN_MIN`) — waarom die niet geijkt wordt
+
+De 15 minuten zijn de betaalde voorbereidingstijd vóór de eerste scan, vastgelegd
+als afspraak met de koeriers. Het is dus geen schatting van waargenomen gedrag, en
+er is niets om hem tegen af te zetten: een mediaan van (bevestigde starttijd −
+eerste inscan) zou meten wat koeriers invullen, niet wat is afgesproken.
+
+Het **aantal pakketten is nooit relevant**. Of er 2 of 200 klaarstaan, alleen het
+tijdstip van de eerste scan telt; de marge schaalt niet mee.
+
+Wijzigen kan alleen als de afspraak zelf verandert — dan is dit een
+administratieve wijziging, geen herijking.
 
 ## Gevoeligheid (gemeten, 348 bezorgingen)
 
