@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, LogOut, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarClock, LogOut, Phone, RefreshCw, Trash2 } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -7,6 +7,7 @@ import Login from './components/Login';
 import WeekOverview from './planner/WeekOverview';
 import ShiftForm from './planner/ShiftForm';
 import PharmacySchedule from './planner/PharmacySchedule';
+import CourierContacts from './planner/CourierContacts';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
 import { TYPE_STYLES } from './planner/constants';
@@ -26,6 +27,7 @@ export default function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [scheduleTarget, setScheduleTarget] = useState<{ id: string; name: string } | null>(null);
+  const [showContacts, setShowContacts] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
@@ -108,6 +110,13 @@ export default function App() {
             title="Roosterconcepten bijwerken t/m het venster-einde"
           >
             <CalendarClock size={15} /> Rooster bijwerken
+          </button>
+          <button
+            onClick={() => setShowContacts(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Mobiele nummers van koeriers beheren"
+          >
+            <Phone size={15} /> Nummers
           </button>
           <button
             onClick={() => setRefreshSignal((n) => n + 1)}
@@ -218,6 +227,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {showContacts && <CourierContacts onClose={() => setShowContacts(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule

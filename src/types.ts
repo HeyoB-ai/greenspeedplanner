@@ -75,6 +75,28 @@ export interface ScheduleLine {
 
 export type ScheduleLineInput = Omit<ScheduleLine, 'id' | 'isActive'>;
 
+// Verstuurstatus van de herinnerings-SMS van één dienst (migratie 012).
+// 'sending' = geclaimd maar geen bevestiging van de provider: het proces is
+// tussen claimen en versturen gestorven. Er gaat dan géén bericht meer uit.
+export type SmsStatus = 'sending' | 'sent' | 'failed';
+
+export interface SmsLogEntry {
+  shiftId: string;
+  status: SmsStatus;
+  sentAt: string | null;
+  error: string | null;
+  phoneE164: string;
+}
+
+// Telefoonnummer van een koerier (migratie 011). Staat bewust NIET op
+// user_profiles: die tabel is van de bezorg-app en heeft een zelf-leespad.
+export interface CourierContact {
+  courierId: string;
+  phoneE164: string;   // altijd E.164, bv. '+31612345678'
+  note: string | null;
+  updatedAt: string;
+}
+
 // Payload voor het aanmaken van een dienst (stap C).
 export interface NewShiftInput {
   courierId: string | null;
