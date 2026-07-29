@@ -15,10 +15,14 @@ Twee invarianten dragen het geheel:
 > aankondiging die die dienst dekt. Een sweep maakt dat waar.
 >
 > **2.** Tijdsverloop mag een aankondiging laten vervallen of versmallen, maar
-> nooit een bericht veroorzaken. Alleen een menselijke handeling kan een bericht
-> laten ontstaan.
+> nooit een bericht veroorzaken. Alleen een ingreep kan een bericht laten
+> ontstaan — en een ingreep wordt als zodanig vastgelegd, niet uit de
+> verzamelingen afgeleid.
 
-De tweede invariant is de reden dat het venster in punt 5 werkt.
+De tweede invariant is de reden dat het venster in punt 5 werkt. De staart van
+die invariant — *vastgelegd, niet afgeleid* — is niet vrijblijvend: zonder die
+vastlegging is een variant die verdwijnt door tijdsverloop niet te onderscheiden
+van een variant die verdwijnt doordat de planner hem wegwijzigt.
 
 ---
 
@@ -92,6 +96,7 @@ subject_id        UUID
 courier_id        UUID
 covered_variants  TEXT[]         -- welke varianten gedekt zijn, zie 5
 announced_at      TIMESTAMPTZ
+dirtied_at        TIMESTAMPTZ NULL   -- er is ingegrepen sinds de aankondiging, zie 5
 superseded_at     TIMESTAMPTZ NULL
 
 UNIQUE (subject_type, subject_id, courier_id) WHERE superseded_at IS NULL
@@ -188,21 +193,49 @@ Bewust **niet** in de variant:
   verandering in wat de koerier moet doen. `transport_mode` zit er wél in: wie een
   fiets verwacht en een auto nodig heeft, heeft een probleem.
 
+### Een variant die verdwíjnt is soms óók nieuws
+
+De insluitingstoets alleen is niet genoeg. Staat er 07:45 én 08:15 bevestigd en
+zet de planner de 08:15-diensten terug naar 07:45, dan is `V = {07:45} ⊆ C` — de
+toets ziet niets nieuws en zou zwijgen, terwijl de koerier verteld is dat hij om
+08:15 komt en dat niet meer waar is.
+
+Dat is niet met verzamelingen op te lossen: `V ⊆ C` met `C ⊄ V` ziet er *identiek*
+uit of de variant uit het venster liep (tijdsverloop, terecht stil) of werd
+weggewijzigd (ingreep, wel nieuws). De onderliggende gebeurtenis verschilt, de
+uitkomst van de rekensom niet.
+
+**Daarom wordt de ingreep vastgelegd in plaats van afgeleid.** Een trigger op de
+kolommen die de variant vormen zet `dirtied_at` op de actieve aankondiging (punt
+8). De sweep weet daarmee of een versmalling van de klok komt of van een mens.
+
+Bewust een vlag en geen `superseded_at` uit de trigger: bij superseden zou een
+wijziging die per saldo niets verandert (aanpassen en meteen terugzetten) alsnog
+een bericht opleveren. Met een vlag vergelijkt de sweep de standen en zwijgt hij
+als ze gelijk zijn.
+
 ### Het volledige besluit per (subject, koerier)
 
 `V` = varianten over de bevestigde diensten in het venster. `C` =
-`covered_variants` van de actieve aankondiging.
+`covered_variants` van de actieve aankondiging. `bij` = `V ⊄ C` (er is iets
+bijgekomen), `af` = `C ⊄ V` (er is iets verdwenen).
 
 | Situatie | Handeling | Bericht? |
 |---|---|---|
-| `V` niet leeg, geen actieve aankondiging | aankondiging aanmaken met `covered := V` | **ja** — `*_confirmed` |
-| `V \ C` niet leeg | oude op `superseded_at`, nieuwe met `covered := V` | **ja** — `*_changed` |
-| `V ⊆ C` maar `C ⊄ V` | `covered := C ∩ V` | **nee** |
+| `V` niet leeg, geen actieve aankondiging | aankondigen met `covered := V` | **ja** — `*_confirmed` |
+| `bij` | oude op `superseded_at`, nieuwe met `covered := V` | **ja** — `*_changed` |
+| vlag gezet én `af` (en niet `bij`) | idem | **ja** — `*_changed` |
+| vlag gezet, `V` = `C` | alleen de vlag wissen | **nee** |
+| geen vlag, `af` | `covered := C ∩ V` | **nee** — tijdsverloop |
 | `V` leeg, actieve aankondiging | op `superseded_at` | **nee** |
 
-De derde en vierde regel zijn wat tijdsverloop doet: versmallen en laten
-vervallen, allebei zwijgend. Een bericht ontstaat alleen op regel 1 en 2, en die
-vereisen dat `V` iets bevat dat er niet in zat — wat de klok niet kan bewerken.
+De onderste twee regels zijn wat de klok doet: versmallen en laten vervallen,
+allebei zwijgend. Een bericht vereist óf iets nieuws in `V`, óf een vastgelegde
+ingreep — en de klok kan geen van beide bewerken.
+
+Regel 5 blijft nodig náást de vlag: zonder versmallen zou een variant die uit het
+venster liep voor altijd als "al gemeld" blijven gelden, en zou een terugdraaiing
+naar die variant later niet meer als nieuws herkend worden.
 
 Twee gevolgen die het waard zijn om te noemen:
 
@@ -245,12 +278,29 @@ welke daadwerkelijk omgingen — al bevestigde diensten worden stil overgeslagen
 Een samenvatting op basis van de clientintentie zou diensten noemen die niets
 nieuws waren.
 
-## 8. Afmelden doet een trigger — bij verwijderen én bij een koerierwissel
+## 8. Drie triggers op bevestigde diensten
 
-Twee triggers, want in beide gevallen kan een sweep niet zien wat er verdwenen is:
+De sweep kan twee dingen niet zien: wat er verdwenen is, en of een versmalling van
+een mens kwam. Daar zijn triggers voor.
 
-- `AFTER DELETE ON shifts` waar `OLD.status = 'planned'` en koerier gevuld → een
-  `shift_cancelled`-rij met de gegevens uit `OLD` gekopieerd.
+**Ingreep vastleggen** — `AFTER UPDATE OF shift_date, start_time,
+budgeted_end_time, transport_mode ON shifts` waar `status = 'planned'`, plus
+`AFTER INSERT OR DELETE ON shift_pharmacies` voor een bevestigde dienst → zet
+`dirtied_at` op de actieve aankondiging van dat subject en die koerier. Géén
+outbox-rij: de sweep bepaalt of er werkelijk iets veranderd is en levert de tekst
+met de actuele stand.
+
+Dit is de trigger die in een eerdere versie van dit document ontbrak, waardoor een
+weggewijzigde variant stil verdween. `courier_id` zit er bewust niet bij: een
+koerierwissel gaat langs de twee triggers hieronder.
+
+**Afmelden** — twee triggers, want in beide gevallen kan een sweep niet zien wat
+er verdwenen is:
+
+- `BEFORE DELETE ON shifts` waar `OLD.status = 'planned'` en koerier gevuld → een
+  `shift_cancelled`-rij met de gegevens uit `OLD` gekopieerd. **Vóór** het
+  verwijderen en niet erna, want `shift_pharmacies` ruimt zichzelf op via
+  `ON DELETE CASCADE` — in een `AFTER`-trigger zijn de apotheeknamen al weg.
 - `AFTER UPDATE OF courier_id ON shifts` waar `status = 'planned'` en de koerier
   daadwerkelijk wijzigt → een afmelding voor de **oude** koerier. De nieuwe
   koerier wordt door de sweep opgepakt: die heeft geen aankondiging.
@@ -293,7 +343,7 @@ wint, mag handelen.
 | Risico | Wat het tegenhoudt |
 |---|---|
 | Twee bevestigingsacties in dezelfde minuut, of twee planners tegelijk | Eerste aankondiging: `INSERT … ON CONFLICT DO NOTHING RETURNING id` op de partiële unieke index. Beide transacties proberen de rij, één wint, alleen de winnaar schrijft een outbox-rij. |
-| Twee sweeps zien tegelijk een nieuwe variant | Vervolg-aankondiging: `UPDATE courier_announcements SET superseded_at = now() WHERE … AND superseded_at IS NULL AND NOT ($V <@ covered_variants) RETURNING id`. De `UPDATE` is de claim; wie geen rij terugkrijgt, doet niets. |
+| Twee sweeps zien tegelijk een nieuwe variant of een vastgelegde ingreep | Vervolg-aankondiging: `UPDATE courier_announcements SET superseded_at = now() WHERE id = $1 AND superseded_at IS NULL RETURNING id`. De `UPDATE` is de claim; wie geen rij terugkrijgt, doet niets en schrijft dus ook geen outbox-rij. |
 | Herstart tijdens het verzenden | `UPDATE mail_outbox SET status='sending' WHERE id = $1 AND status='pending' RETURNING id`. Lege uitkomst betekent dat een ander proces hem heeft. Crasht het proces na de claim, dan blijft de rij op `sending` staan en gaat er niets meer uit — fail-closed en zichtbaar, dezelfde keuze als bij de SMS. |
 
 Het versmallen (regel 3 in punt 5) heeft geen gate nodig: twee sweeps berekenen

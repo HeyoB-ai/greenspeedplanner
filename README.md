@@ -38,6 +38,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `013_car_is_own_optional.sql` | car-CHECK vervalt op `shifts` en `pharmacy_schedules`; NULL = nog niet bekend |
 | `014_invitations_rls.sql` | RLS op `invitations`: geen publieke tokens meer, aanmaken alleen door bevoegden |
 | `015_signup_role_clamp.sql` | registratie levert altijd een koerier op; accounts daarboven maak je zelf aan (zie de kop van de migratie) |
+| `016_shift_mail.sql` | bevestigingsmail: `courier_announcements` + `mail_outbox` + `mail_sweep()` + triggers + `email_override` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -54,6 +55,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `012_sms_log_test.sql` | selectie van de herinnerings-SMS (concept/begonnen/buiten venster/geen nummer) + claim precies één keer + tijdzonegrens |
 | `014_invitations_rls_test.sql` | koerier mag geen uitnodiging maken en ziet geen tokens; planner wél, inclusief de returning-select van `inviteUser` |
 | `015_signup_role_clamp_test.sql` | `role=superuser` uit metadata wordt courier; `pharmacy_ids` uit metadata genegeerd; zonder rol géén profiel |
+| `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
 `SET LOCAL ROLE authenticated`. Zonder die rolwissel draai je als `postgres` en
