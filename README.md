@@ -59,6 +59,60 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 `SET LOCAL ROLE authenticated`. Zonder die rolwissel draai je als `postgres` en
 die omzeilt RLS volledig — de test slaagt dan altijd en bewijst niets.
 
+## Gebruikers aanmaken
+
+Sinds migratie 015 levert **elke registratie via het publieke formulier een
+koerier op**, wat er ook in de metadata staat. Alles daarboven — `superuser`,
+`supervisor`, `admin` én `pharmacy` — maak je met de hand aan, in twee stappen.
+
+De reden dat het twee stappen zijn: de trigger `on_auth_user_created` vuurt bij
+elke nieuwe rij in `auth.users`, ook bij eentje die jij in het dashboard
+aanmaakt. De database kan niet zien of een rij van het publieke formulier komt
+of van jouw hand — beide zijn een insert in dezelfde tabel, zonder sessie. Wat
+wél verschilt is de metadata, en daar zit het pad: **zonder rol in de metadata
+maakt de trigger geen profielrij aan**, zodat jij hem daarna zelf zet.
+
+**Stap 1 — account.** Dashboard → Authentication → Add user. E-mailadres en
+wachtwoord invullen, "Auto Confirm User" aan, en de **user-metadata leeg laten**
+(geen `role`-veld).
+
+**Stap 2 — profiel.** SQL Editor, met de juiste rol:
+
+```sql
+INSERT INTO public.user_profiles (id, name, role, pharmacy_ids)
+SELECT id, 'Naam van de persoon', 'pharmacy', ARRAY['ph-123']
+FROM auth.users WHERE email = 'iemand@apotheek.nl';
+```
+
+| Rol | Waarvoor | `pharmacy_ids` |
+|---|---|---|
+| `superuser` | volledige toegang, planner | leeg `'{}'` |
+| `supervisor` | regiomanager, planner | leeg `'{}'` |
+| `admin` | apotheker/beheerder van een apotheek | de eigen apotheek/apotheken |
+| `pharmacy` | apotheekmedewerker | de eigen apotheek/apotheken |
+| `courier` | koerier | leeg — koppelt zichzelf via de koppelcode |
+
+`superuser`, `supervisor` en `admin` zijn de rollen die `is_privileged()` als
+planner ziet; die krijgen dus ook toegang tot het plannerscherm.
+
+**Ging het mis?** Zat er tóch een `role` in de metadata, dan is het een koerier
+geworden en staat er een `[rol-clamp]`-regel in de Postgres-logs. Rechtzetten:
+
+```sql
+UPDATE public.user_profiles SET role = 'pharmacy', pharmacy_ids = ARRAY['ph-123']
+WHERE id = '<uuid>';
+```
+
+Dat mag: in de SQL Editor draai je als `postgres`, en de kolomrechten die
+`role` en `hourlyWage` afschermen gelden voor de rol `authenticated`, niet voor
+jou.
+
+**Koeriers** hoef je hier niet aan te maken. Die registreren zichzelf op het
+inlogscherm van de bezorg-app en koppelen zich daarna met de koppelcode aan een
+apotheek. Staat "Allow new users to sign up" in Supabase Auth uit, dan kan dat
+niet en maak je ze op dezelfde manier aan als hierboven, met rol `courier` en
+lege `pharmacy_ids`.
+
 ## Scripts
 
 Eenmalige/beheerscripts in `scripts/`. Ze praten met de gedeelde database via de
