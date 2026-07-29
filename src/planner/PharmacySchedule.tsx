@@ -3,7 +3,7 @@ import { AlertTriangle, Pencil, Plus, Power, X } from 'lucide-react';
 import { Courier, ScheduleLine, ScheduleLineInput, TransportMode } from '../types';
 import { getCouriers } from './plannerService';
 import { createSchedule, deactivateSchedule, getSchedules, updateSchedule } from './scheduleService';
-import { TRANSPORT_LABELS, WEEKDAY_LABELS, WEEKDAY_LABELS_LONG } from './constants';
+import { TRANSPORT_LABELS, WEEKDAY_LABELS, WEEKDAY_LABELS_LONG, carOwnerLabel } from './constants';
 
 interface Props {
   pharmacyId: string;
@@ -73,7 +73,9 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
     if (!form) return;
     setError('');
     if (!form.startTime) { setError('Vul een starttijd in.'); return; }
-    if (form.transportMode === 'car' && form.carIsOwn === null) { setError('Kies eigen of bedrijfsauto.'); return; }
+    // Geen blokkade meer op een ontbrekende autokeuze: sinds migratie 013 is
+    // "nog niet bekend" een geldige stand. De markering in het overzicht houdt
+    // het zichtbaar.
 
     setSaving(true);
     try {
@@ -129,6 +131,11 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
                   {' · '}{l.startTime}{l.budgetedEndTime ? `–${l.budgetedEndTime}` : ''}
                   {' · '}{l.courierId ? (courierName.get(l.courierId) ?? 'Koerier') : 'Open'}
                   {' · '}{TRANSPORT_LABELS[l.transportMode]}
+                  {l.transportMode === 'car' && (
+                    <span className={l.carIsOwn === null ? 'text-amber-600' : 'text-slate-500'}>
+                      {' '}({carOwnerLabel(l.carIsOwn)})
+                    </span>
+                  )}
                   <span className="block text-xs text-slate-400">
                     vanaf {l.startDate}{l.endDate ? ` t/m ${l.endDate}` : ''}{l.isActive ? '' : ' · inactief'}
                   </span>
@@ -192,7 +199,10 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
                   <select value={form.transportMode}
                     onChange={(e) => {
                       const m = e.target.value as TransportMode;
-                      setForm({ ...form, transportMode: m, carIsOwn: m === 'car' ? (form.carIsOwn ?? false) : null });
+                      // Bij auto de bestaande keuze behouden, anders null (= nog
+                      // niet bekend). Géén stille terugval op 'bedrijfsauto':
+                      // dat maakt een gok ononderscheidbaar van een keuze.
+                      setForm({ ...form, transportMode: m, carIsOwn: m === 'car' ? form.carIsOwn : null });
                     }}
                     className="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
                     <option value="bike">{TRANSPORT_LABELS.bike}</option>
@@ -202,12 +212,21 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
                 {form.transportMode === 'car' && (
                   <label className="text-sm">
                     <span className="block font-medium mb-1">Auto</span>
-                    <select value={form.carIsOwn === null ? '' : form.carIsOwn ? 'own' : 'company'}
-                      onChange={(e) => setForm({ ...form, carIsOwn: e.target.value === 'own' })}
+                    <select value={form.carIsOwn === null ? 'unknown' : form.carIsOwn ? 'own' : 'company'}
+                      onChange={(e) => setForm({
+                        ...form,
+                        carIsOwn: e.target.value === 'unknown' ? null : e.target.value === 'own',
+                      })}
                       className="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
                       <option value="own">Eigen auto</option>
                       <option value="company">Bedrijfsauto</option>
+                      <option value="unknown">Nog niet bekend</option>
                     </select>
+                    {form.carIsOwn === null && (
+                      <span className="block text-xs text-amber-600 mt-1">
+                        Diensten uit deze regel komen binnen met "auto onbekend".
+                      </span>
+                    )}
                   </label>
                 )}
                 <label className="text-sm">

@@ -78,7 +78,7 @@ export async function getShiftsForWeek(
 
   const { data: shifts, error } = await sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable, schedule_id')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id')
     .gte('shift_date', startDate)
     .lte('shift_date', endDate)
     .order('start_time', { ascending: true });
@@ -118,6 +118,7 @@ export async function getShiftsForWeek(
     budgetedEndTime: s.budgeted_end_time ? shortTime(s.budgeted_end_time) : null,
     status: s.status,
     transportMode: s.transport_mode as TransportMode,
+    carIsOwn: s.car_is_own ?? null,
     description: s.description,
     pharmacyIds: pharmaciesByShift.get(s.id) ?? [],
     institutionIds: institutionsByShift.get(s.id) ?? [],
@@ -133,7 +134,7 @@ export async function getCourierShiftsOnDate(
   const sb = requireClient();
   let q = sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, description, timing_reliable, schedule_id')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id')
     .eq('courier_id', courierId)
     .eq('shift_date', dateISO);
   if (excludeShiftId) q = q.neq('id', excludeShiftId);
@@ -161,6 +162,7 @@ export async function getCourierShiftsOnDate(
     budgetedEndTime: s.budgeted_end_time ? shortTime(s.budgeted_end_time) : null,
     status: s.status,
     transportMode: s.transport_mode,
+    carIsOwn: s.car_is_own ?? null,
     description: s.description,
     pharmacyIds: byShift.get(s.id) ?? [],
     institutionIds: [],
@@ -183,6 +185,8 @@ export async function createShift(input: NewShiftInput): Promise<string> {
       start_time: input.startTime,
       budgeted_end_time: input.budgetedEndTime,
       transport_mode: input.transportMode,
+      // Bij fiets altijd null; bij auto mag null (= nog niet bekend) sinds 013.
+      car_is_own: input.transportMode === 'car' ? input.carIsOwn : null,
       // status niet meegegeven → DB-default 'draft' (concept). Bevestigen tilt
       // hem later naar 'planned'.
       description: input.description,
@@ -245,6 +249,11 @@ export async function updateShift(shiftId: string, input: NewShiftInput): Promis
       start_time: input.startTime,
       budgeted_end_time: input.budgetedEndTime,
       transport_mode: input.transportMode,
+      // Altijd meeschrijven, ook bij fiets. Zou car_is_own hier ongemoeid
+      // blijven, dan overleeft een eerdere autokeuze de omschakeling naar fiets
+      // en duikt hij weer op zodra iemand terugzet naar auto — een waarde die
+      // niemand op dat moment gekozen heeft.
+      car_is_own: input.transportMode === 'car' ? input.carIsOwn : null,
       description: input.description,
       timing_reliable: input.timingReliable,
     })

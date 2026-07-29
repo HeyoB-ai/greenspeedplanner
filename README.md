@@ -35,6 +35,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `010_schedule_exception_trigger.sql` | delete-trigger (exception-vangnet) + `remove_future_schedule_drafts` RPC |
 | `011_courier_contacts.sql` | telefoonnummers van koeriers (planner-only, aparte tabel) |
 | `012_shift_sms_log.sql` | `shift_sms_log` + `sms_due_shifts` / `sms_claim_shift` / `sms_record_result` |
+| `013_car_is_own_optional.sql` | car-CHECK vervalt op `shifts` en `pharmacy_schedules`; NULL = nog niet bekend |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.

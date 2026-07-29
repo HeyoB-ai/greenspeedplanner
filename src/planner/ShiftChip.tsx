@@ -17,6 +17,9 @@ export default function ShiftChip(
   const isSchedule = !!shift.scheduleId;
   const conflictLevel = conflict?.level ?? 'none';
   const TransportIcon = shift.transportMode === 'car' ? Car : Bike;
+  // Autodienst waarvan nog niet bekend is van wie de auto is. Sinds migratie 013
+  // mag dat, maar het moet wél zichtbaar blijven — anders verdwijnt het stil.
+  const carUnknown = shift.transportMode === 'car' && shift.carIsOwn === null;
 
   const time = shift.budgetedEndTime
     ? `${shift.startTime}–${shift.budgetedEndTime}`
@@ -26,7 +29,7 @@ export default function ShiftChip(
     <button
       type="button"
       onClick={onClick}
-      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isSchedule ? ' · uit rooster' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}${sms ? ` · ${SMS_LABELS[sms.status]}` : ''}`}
+      title={`${style.label}${isDraft ? ' · concept (nog niet bevestigd)' : ''}${isSchedule ? ' · uit rooster' : ''}${isShared ? ` · gedeeld (${shift.pharmacyIds.length} apotheken)` : ''}${isOpen ? ' · nog niet toegewezen' : ''}${carUnknown ? ' · auto onbekend' : ''}${sms ? ` · ${SMS_LABELS[sms.status]}` : ''}`}
       className={[
         'w-full text-left rounded-md px-2 py-1 text-xs leading-tight',
         style.bg, style.text,
@@ -50,7 +53,11 @@ export default function ShiftChip(
           {sms && <MessageSquare size={12} className={SMS_ICON_CLASS[sms.status]} aria-label={SMS_LABELS[sms.status]} />}
           {isSchedule && <Repeat size={12} aria-label="Uit rooster" />}
           {isShared && <Users size={12} aria-label="Gedeelde dienst" />}
-          <TransportIcon size={12} aria-label={shift.transportMode} />
+          <TransportIcon
+            size={12}
+            className={carUnknown ? 'text-amber-600' : ''}
+            aria-label={carUnknown ? 'Auto, eigenaar nog onbekend' : shift.transportMode}
+          />
         </span>
       </div>
       <div className="flex items-center gap-1 mt-0.5">

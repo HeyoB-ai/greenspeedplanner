@@ -49,6 +49,10 @@ export interface Shift {
   budgetedEndTime: string | null;// 'HH:MM' of null
   status: ShiftStatus;
   transportMode: TransportMode;
+  // Alleen betekenisvol bij transportMode 'car'. null = nog niet bekend; bij
+  // 'bike' altijd null. De DB dwingt sinds migratie 013 niets meer af, dus de
+  // waarde moet expliciet meegeschreven worden bij elke wijziging.
+  carIsOwn: boolean | null;
   description: string | null;
   pharmacyIds: string[];
   institutionIds: string[];
@@ -105,6 +109,7 @@ export interface NewShiftInput {
   startTime: string;              // 'HH:MM'
   budgetedEndTime: string | null; // 'HH:MM'
   transportMode: TransportMode;
+  carIsOwn: boolean | null;       // null = nog niet bekend (of fiets)
   description: string | null;
   pharmacyIds: string[];
   institutionIds: string[];

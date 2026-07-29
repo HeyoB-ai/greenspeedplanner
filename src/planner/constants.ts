@@ -35,6 +35,20 @@ export const TRANSPORT_LABELS: Record<TransportMode, string> = {
   car: 'Auto',
 };
 
+// Van wie is de auto. null = nog niet bekend, sinds migratie 013 een volwaardige
+// keuze: bij het inplannen weet de planner het vaak nog niet, en een verplichte
+// keuze levert dan geen kennis op maar een gok.
+export const CAR_OWNER_OPTIONS: { value: boolean | null; label: string }[] = [
+  { value: true,  label: 'Eigen auto' },
+  { value: false, label: 'Bedrijfsauto' },
+  { value: null,  label: 'Nog niet bekend' },
+];
+
+export function carOwnerLabel(carIsOwn: boolean | null): string {
+  if (carIsOwn === null) return 'auto onbekend';
+  return carIsOwn ? 'eigen auto' : 'bedrijfsauto';
+}
+
 export const WEEKDAY_LABELS = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 export const WEEKDAY_LABELS_LONG = [
   'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag', 'Zondag',

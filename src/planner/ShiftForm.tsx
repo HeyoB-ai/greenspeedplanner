@@ -3,7 +3,7 @@ import { AlertTriangle, X } from 'lucide-react';
 import { Courier, Institution, Pharmacy, Shift, ShiftType, TransportMode } from '../types';
 import { createShift, getCouriers, getCourierShiftsOnDate, getInstitutions, getPharmacies, updateShift } from './plannerService';
 import { pairLevel } from './conflicts';
-import { SHIFT_TYPES, TRANSPORT_LABELS, TYPE_STYLES } from './constants';
+import { CAR_OWNER_OPTIONS, SHIFT_TYPES, TRANSPORT_LABELS, TYPE_STYLES } from './constants';
 
 interface Props {
   // Aanwezig => bewerkmodus. Afwezig => aanmaakmodus.
@@ -30,6 +30,9 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
   const [courierId, setCourierId] = useState<string>(shift?.courierId ?? ''); // '' = open
   const [shiftType, setShiftType] = useState<ShiftType>(shift?.shiftType ?? 'regular');
   const [transportMode, setTransportMode] = useState<TransportMode>(shift?.transportMode ?? 'bike');
+  // null = nog niet bekend. Bewust géén stille default op 'bedrijfsauto': dan is
+  // "niemand heeft ernaar gekeken" niet te onderscheiden van een echte keuze.
+  const [carIsOwn, setCarIsOwn] = useState<boolean | null>(shift?.carIsOwn ?? null);
   const [startTime, setStartTime] = useState(shift?.startTime ?? '09:00');
   const [endTime, setEndTime] = useState(shift?.budgetedEndTime ?? '');
   const [selectedInstitutionIds, setSelectedInstitutionIds] = useState<string[]>(shift ? shift.institutionIds : []);
@@ -111,6 +114,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
       startTime,
       budgetedEndTime: endTime || null,
       transportMode,
+      carIsOwn: transportMode === 'car' ? carIsOwn : null,
       description: showDescription ? (description.trim() || null) : null,
       pharmacyIds: selectedPharmacyIds,
       institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
@@ -146,7 +150,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
         const probe: Shift = {
           id: 'nieuw', courierId, courierName: null, shiftType, shiftDate,
           startTime, budgetedEndTime: endTime || null, status: shift?.status ?? 'draft',
-          transportMode, description: null, pharmacyIds: selectedPharmacyIds,
+          transportMode, carIsOwn, description: null, pharmacyIds: selectedPharmacyIds,
           institutionIds: [], timingReliable, scheduleId: shift?.scheduleId ?? null,
         };
         const hard = others.filter((o) => pairLevel(probe, o) === 'hard');
@@ -236,7 +240,12 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
             {(['bike', 'car'] as TransportMode[]).map((m) => (
               <button
                 type="button" key={m}
-                onClick={() => setTransportMode(m)}
+                onClick={() => {
+                  setTransportMode(m);
+                  // Terug naar fiets → keuze wissen, zodat een eerdere autokeuze
+                  // niet blijft hangen en later ongemerkt weer opduikt.
+                  if (m === 'bike') setCarIsOwn(null);
+                }}
                 className={[
                   'px-3 py-1.5 rounded-lg text-sm border',
                   transportMode === m ? 'bg-green-100 text-green-800 border-green-500' : 'border-slate-300 text-slate-600 hover:bg-slate-50',
@@ -246,6 +255,35 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
               </button>
             ))}
           </div>
+
+          {/* Alleen bij auto: van wie is de auto. 'Nog niet bekend' is een
+              volwaardige keuze — bij inplannen is dat vaak nog niet duidelijk. */}
+          {transportMode === 'car' && (
+            <div className="mt-2">
+              <label className="block text-sm font-medium mb-1">Auto</label>
+              <div className="flex flex-wrap gap-2">
+                {CAR_OWNER_OPTIONS.map((o) => (
+                  <button
+                    type="button" key={String(o.value)}
+                    onClick={() => setCarIsOwn(o.value)}
+                    className={[
+                      'px-3 py-1.5 rounded-lg text-sm border',
+                      carIsOwn === o.value
+                        ? 'bg-green-100 text-green-800 border-green-500'
+                        : 'border-slate-300 text-slate-600 hover:bg-slate-50',
+                    ].join(' ')}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {carIsOwn === null && (
+                <p className="text-xs text-amber-600 mt-1">
+                  Zonder keuze blijft de dienst gemarkeerd als "auto onbekend" in het overzicht.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Tijden */}

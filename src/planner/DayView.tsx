@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowLeft, Bike, Car, CheckCircle2, MapPin, MessageSquare, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
 import { Shift, SmsLogEntry } from '../types';
 import { ConflictOther, ShiftConflict } from './conflicts';
-import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG } from './constants';
+import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG, carOwnerLabel } from './constants';
 import { SMS_ICON_CLASS, SMS_LABELS, formatSentAt } from './sms';
 
 interface Props {
@@ -47,6 +47,7 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
           const isDraft = s.status === 'draft';
           const conflict = conflicts.get(s.id);
           const sms = smsLog.get(s.id);
+          const carUnknown = s.transportMode === 'car' && s.carIsOwn === null;
           return (
             <div key={s.id} className={`rounded-lg border ${style.border} bg-white p-3 ${isDraft ? 'border-dashed' : ''}`}>
               <div className="flex items-center justify-between">
@@ -85,7 +86,13 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
                     : <><UserCircle2 size={14} /> {s.courierName ?? 'Koerier'}</>}
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <TransportIcon size={14} /> {TRANSPORT_LABELS[s.transportMode]}
+                  <TransportIcon size={14} className={carUnknown ? 'text-amber-600' : ''} />
+                  {TRANSPORT_LABELS[s.transportMode]}
+                  {s.transportMode === 'car' && (
+                    <span className={carUnknown ? 'text-amber-600' : 'text-slate-500'}>
+                      ({carOwnerLabel(s.carIsOwn)})
+                    </span>
+                  )}
                 </span>
               </div>
 
