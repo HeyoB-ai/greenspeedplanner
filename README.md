@@ -164,11 +164,30 @@ DELETE FROM public.courier_announcements;   -- eerstvolgende sweep meldt alles o
 `supabase/functions/send-shift-mail/` leest de outbox, bundelt per koerier en
 verstuurt via Brevo. Vereist migratie 017.
 
-Per koerier: **eerst het adres bepalen, dan claimen.** Is er geen adres of staat
-het niet op de allowlist, dan wordt er niet geclaimd en blijven de berichten op
+Per koerier: **eerst het adres bepalen, dan claimen.** Is er geen adres of houdt
+de poort het tegen, dan wordt er niet geclaimd en blijven de berichten op
 `pending` staan — ze gaan gewoon mee zodra het adres er is of de beperking eraf
 gaat. Zou je eerst claimen, dan zou zo'n bundel als mislukt eindigen en nooit
 meer uitgaan.
+
+**De poort is fail-closed.** Bij de SMS zat de bescherming in de data: alleen
+ingevoerde nummers konden bereikt worden. Bij mail heeft élke koerier al een
+adres in `auth.users`, dus configuratie is het enige vangnet — en een vergeten of
+verkeerd getypt secret mag niet betekenen dat alles uitgaat.
+
+| `MAIL_ALLOWLIST` | `MAIL_LIVE` | Wat er gebeurt |
+|---|---|---|
+| leeg | uit | **niets** gaat uit; alles blijft wachten |
+| gevuld | uit | alleen naar de adressen op de lijst |
+| gevuld | `1` | alleen naar de adressen op de lijst — de allowlist wint, mét waarschuwing in de logs |
+| leeg | `1` | naar alle koeriers |
+
+Live gaan is dus twee bewuste handelingen: `MAIL_LIVE=1` zetten én de allowlist
+wissen. "Leeg" betekent nooit vanzelf "naar iedereen".
+
+De dry run negeert de poort niet maar toont hem: per koerier staat er
+`would_send` en `blocked_by` bij, zodat je de poort kunt controleren vóór je hem
+opent.
 
 | Variabele | Standaard | Waarvoor |
 |---|---|---|
@@ -176,7 +195,8 @@ meer uitgaan.
 | `MAIL_FROM` | — | afzenderadres, nu `planning@greenspeedkoeriers.nl` (**mét** s) |
 | `MAIL_FROM_NAME` | `Greenspeed Planning` | weergavenaam |
 | `MAIL_REPLY_TO` | — | optioneel; antwoorden komen anders op `MAIL_FROM` |
-| `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; **gevuld = alleen daarheen**. Leeg = alles gaat uit, en de functie logt dat bij elke run |
+| `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; gevuld = **alleen daarheen** |
+| `MAIL_LIVE` | — | `1` = naar alle koeriers. Zonder allowlist én zonder deze vlag gaat er **niets** uit |
 | `MAIL_MAX_PER_RUN` | `25` | koeriers per run; overschot komt de volgende run |
 | `MAIL_DRY_RUN` | — | `1` = niets claimen, niets versturen |
 | `CRON_SECRET` | — | indien gezet, verplicht als header `x-cron-secret` |

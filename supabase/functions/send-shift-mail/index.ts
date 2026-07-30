@@ -34,14 +34,32 @@ const MAIL_REPLY_TO    = Deno.env.get('MAIL_REPLY_TO') ?? '';
 const CRON_SECRET      = Deno.env.get('CRON_SECRET') ?? '';
 const MAX_PER_RUN      = Number(Deno.env.get('MAIL_MAX_PER_RUN') ?? '25');
 
-// Zolang het testdomein in gebruik is: alleen naar deze adressen. Leeg betekent
-// géén beperking — dat is de bewuste stap "we gaan live", en de functie zegt dat
-// bij elke run in de logs zodat het niet per ongeluk zo blijft staan.
+// ── De poort: fail-closed ────────────────────────────────────────────────
+// Bij de SMS zat de bescherming in de data: alleen ingevoerde nummers konden
+// bereikt worden, en die voerde de planner zelf in. Bij mail heeft élke koerier
+// al een adres in auth.users, dus het enige vangnet is configuratie. Een vergeten
+// of verkeerd getypt secret zou dan betekenen dat alles uitgaat.
+//
+// Daarom: zonder allowlist gaat er NIETS uit. Live gaan vergt een aparte,
+// expliciete MAIL_LIVE=1 — losgekoppeld van de allowlist, zodat "leeg" nooit per
+// ongeluk "naar iedereen" betekent.
 const ALLOWLIST = (Deno.env.get('MAIL_ALLOWLIST') ?? '')
   .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const LIVE = (Deno.env.get('MAIL_LIVE') ?? '') === '1';
 
-function isAllowed(address: string): boolean {
-  return ALLOWLIST.length === 0 || ALLOWLIST.includes(address.toLowerCase());
+// Staat er zowel een allowlist als MAIL_LIVE, dan wint de allowlist: de meest
+// beperkende instelling. Iemand die live gaat en vergeet de allowlist te wissen,
+// verstuurt dan te weinig in plaats van te veel — en ziet dat in de logs.
+function gateFor(address: string): { send: boolean; reason?: string } {
+  if (ALLOWLIST.length > 0) {
+    return ALLOWLIST.includes(address.toLowerCase())
+      ? { send: true }
+      : { send: false, reason: 'niet op MAIL_ALLOWLIST' };
+  }
+  if (!LIVE) {
+    return { send: false, reason: 'geen MAIL_ALLOWLIST en MAIL_LIVE staat niet aan' };
+  }
+  return { send: true };
 }
 
 // ── Vormen uit de outbox ─────────────────────────────────────────────────
@@ -287,8 +305,16 @@ Deno.serve(async (req) => {
   if (!dryRun && (!BREVO_API_KEY || !MAIL_FROM)) {
     return json({ error: 'BREVO_API_KEY en/of MAIL_FROM ontbreken' }, 500);
   }
-  if (ALLOWLIST.length === 0) {
-    console.warn('[mail] GEEN MAIL_ALLOWLIST gezet — er wordt naar alle koeriers verstuurd.');
+  // Bij elke run vastleggen in welke stand hij draait; anders is achteraf niet te
+  // zien waarom er niets is verstuurd, of juist alles.
+  if (ALLOWLIST.length > 0 && LIVE) {
+    console.warn(`[mail] MAIL_LIVE staat aan MAAR er is een allowlist van ${ALLOWLIST.length} adres(sen) — de allowlist wint. Wis hem om echt live te gaan.`);
+  } else if (ALLOWLIST.length > 0) {
+    console.log(`[mail] Testmodus: alleen naar ${ALLOWLIST.length} adres(sen) op de allowlist.`);
+  } else if (LIVE) {
+    console.warn('[mail] LIVE: er wordt naar alle koeriers verstuurd.');
+  } else {
+    console.warn('[mail] Geen MAIL_ALLOWLIST en MAIL_LIVE staat niet aan — er wordt NIETS verstuurd. Berichten blijven wachten.');
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -325,12 +351,14 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // 2. Allowlist-poort — óók niet claimen, zodat de post uitgaat zodra de
-    //    beperking eraf is.
-    if (!isAllowed(address)) {
-      console.log(`[mail] ${c.courier_name} <${address}>: niet op MAIL_ALLOWLIST, ${c.items} bericht(en) blijven wachten.`);
+    // 2. De poort — óók niet claimen, zodat de post uitgaat zodra de beperking
+    //    eraf is. In een dry run gaan we wél door, met de uitkomst erbij: juist
+    //    de poort wil je kunnen controleren vóór je hem opent.
+    const gate = gateFor(address);
+    if (!gate.send && !dryRun) {
+      console.log(`[mail] ${c.courier_name} <${address}>: ${gate.reason}, ${c.items} bericht(en) blijven wachten.`);
       skipped++;
-      results.push({ courier: c.courier_name, skipped: 'niet op allowlist', to: address, items: c.items });
+      results.push({ courier: c.courier_name, skipped: gate.reason, to: address, items: c.items });
       continue;
     }
 
@@ -377,6 +405,7 @@ Deno.serve(async (req) => {
     if (dryRun) {
       results.push({
         courier: courierName, to: address, source: recip?.source,
+        would_send: gate.send, blocked_by: gate.reason,
         items: rows.length, kinds: rows.map((r) => r.kind),
         subject: mail.subject, text: mail.text,
       });
@@ -415,7 +444,7 @@ Deno.serve(async (req) => {
 
   const summary = {
     dry_run: dryRun,
-    allowlist: ALLOWLIST.length > 0 ? ALLOWLIST.length : 'geen (alles gaat uit)',
+    mode: ALLOWLIST.length > 0 ? `allowlist (${ALLOWLIST.length})` : (LIVE ? 'live' : 'dicht — niets gaat uit'),
     couriers_with_mail: all.length,
     processed: batch.length,
     capped, sent, failed, skipped, empty,
