@@ -194,7 +194,7 @@ opent.
 | `BREVO_API_KEY` | — | verplicht, behalve in dry run; type `xkeysib-…` |
 | `MAIL_FROM` | — | afzenderadres, nu `planning@greenspeedkoeriers.nl` (**mét** s) |
 | `MAIL_FROM_NAME` | `Greenspeed Planning` | weergavenaam |
-| `MAIL_REPLY_TO` | — | optioneel; antwoorden komen anders op `MAIL_FROM` |
+| `MAIL_REPLY_TO` | — | `info@greenspeedkoerier.nl` (**zonder** s). Hoeft niet geverifieerd te zijn in Brevo — dat geldt alleen voor de afzender |
 | `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; gevuld = **alleen daarheen** |
 | `MAIL_LIVE` | — | `1` = naar alle koeriers. Zonder allowlist én zonder deze vlag gaat er **niets** uit |
 | `MAIL_MAX_PER_RUN` | `25` | koeriers per run; overschot komt de volgende run |
@@ -206,9 +206,19 @@ Uitrollen:
 ```powershell
 npx supabase secrets set MAIL_FROM=planning@greenspeedkoeriers.nl `
   MAIL_FROM_NAME="Greenspeed Planning" `
+  MAIL_REPLY_TO=info@greenspeedkoerier.nl `
   MAIL_ALLOWLIST="jouw@eigenadres.nl"
 npx supabase functions deploy send-shift-mail
 ```
+
+> ⚠️ **Vóór je live gaat: afzender en reply-to op hetzelfde domein zetten.**
+> Nu vertrekt de mail van `planning@greenspeedkoerier**s**.nl` (testdomein, mét s)
+> terwijl antwoorden naar `info@greenspeedkoerier.nl` gaan (echte domein, zónder
+> s). Twee domeinen die één letter schelen, in één bericht — dat is voor een
+> koerier niet te onderscheiden van een phishingpoging, en spamfilters kijken er
+> ook naar. Zolang `MAIL_ALLOWLIST` alleen jouw eigen adres bevat ziet niemand
+> anders het. Zodra `greenspeedkoerier.nl` in Brevo geverifieerd is, zet je
+> `MAIL_FROM` daarheen om en klopt het weer.
 
 Proefdraaien — laat per koerier het adres, de berichtsoorten, het onderwerp en de
 volledige tekst zien, zonder iets te claimen of te versturen:

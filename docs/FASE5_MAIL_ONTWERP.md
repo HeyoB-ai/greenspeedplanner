@@ -403,11 +403,6 @@ niet terug te halen.
 Niet besloten — hier expliciet genoteerd zodat het niet stilzwijgend ingevuld
 wordt tijdens de bouw.
 
-- **Reply-to en de postbus.** Antwoorden op een mail is natuurlijk gedrag, anders
-  dan bij de SMS. `planning@greenspeedkoeriers.nl` moet dus een postbus zijn die
-  iemand leest, of er moet een `Reply-To` naar een adres dat dat wel is. Anders
-  verdwijnt "ik kan niet" in het niets — precies het bericht waarvoor deze mail
-  bestaat.
 - **Afzenderdomein.** Nu `planning@greenspeedkoeriers.nl` (**mét** s, testdomein,
   DKIM geverifieerd). Het echte domein is `greenspeedkoerier.nl` (**zónder** s) en
   moet geverifieerd zijn vóór er naar echte koeriers gemaild wordt. Het adres komt
@@ -416,6 +411,27 @@ wordt tijdens de bouw.
   `MAIL_ALLOWLIST`-secret zolang het testdomein in gebruik is: leeg maken is dan
   de bewuste stap "we gaan live".
 - **De berichttekst zelf**, zoals bij de SMS pas aan het eind.
+
+## 13. Antwoorden gaan naar een postbus die gelezen wordt
+
+`Reply-To` staat op `info@greenspeedkoerier.nl`. Een reply-to hoeft in Brevo niet
+geverifieerd te zijn — dat geldt alleen voor de afzender — dus dit werkt ook zolang
+het echte domein daar nog niet doorheen is.
+
+**Waarom dit een beslissing is en geen detail:** anders dan bij de SMS, waar de
+alfanumerieke afzender antwoorden technisch onmogelijk maakt en de tekst dus naar
+de telefoon verwijst, is antwoorden op een mail natuurlijk gedrag. Komt zo'n
+antwoord op een onbeheerde postbus binnen, dan verdwijnt "ik kan niet" in het
+niets — precies het bericht waarvoor deze mail bestaat. De afsluiting blijft
+daarnaast staan ("Vragen of verhinderd? Bel de planning"), want bellen is sneller
+dan wachten tot iemand de mailbox leest.
+
+**Openstaand risico tot de omzetting.** De mail vertrekt nu van
+`planning@greenspeedkoeriers.nl` (mét s) terwijl antwoorden naar
+`info@greenspeedkoerier.nl` (zonder s) gaan. Twee domeinen die één letter
+schelen, in één bericht: voor een ontvanger niet te onderscheiden van een
+phishingpoging. Zolang `MAIL_ALLOWLIST` alleen het eigen adres bevat ziet niemand
+anders het; vóór live gaan moet `MAIL_FROM` mee naar het echte domein.
 
 ## Raakvlak met de SMS-herinnering
 
