@@ -112,6 +112,15 @@ function dayName(isoDow: number): string {
   return WEEKDAYS[isoDow - 1] ?? 'dag';
 }
 
+// De peildatum boven het bericht, in Nederlandse tijd — de functie draait in UTC.
+function todayNL(): string {
+  const parts = new Intl.DateTimeFormat('nl-NL', {
+    timeZone: 'Europe/Amsterdam', day: '2-digit', month: '2-digit', year: 'numeric',
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('day')}-${get('month')}-${get('year')}`;
+}
+
 function fmtTime(start: string, end: string | null | undefined): string {
   return end ? `${start}-${end}` : start;
 }
@@ -154,18 +163,17 @@ function groupVariants(shifts: PayloadShift[]): Variant[] {
   return [...byKey.values()].sort((a, b) => (a.first < b.first ? -1 : 1));
 }
 
+// Elke regel begint met de datum waarop hij ingaat, en noemt NOOIT wanneer iets
+// ophoudt. Een einddatum is een uitspraak over de toekomst, en die kan stil
+// onwaar worden: de vingerafdruk bevat bewust geen datums (punt 5 van het
+// ontwerp), dus een later bevestigde dienst op de oude tijd levert géén nieuwe
+// mail op. Met alleen ingangsdatums plus de peildatum bovenaan het bericht is
+// zo'n mail hooguit onvolledig in plaats van onwaar.
 function variantLines(shifts: PayloadShift[]): string[] {
-  const variants = groupVariants(shifts);
-  return variants.map((v, i) => {
-    const base = `elke ${dayName(v.shift.weekday)} ${fmtTime(v.shift.start_time, v.shift.budgeted_end_time)}`
-               + ` bij ${joinNames(v.shift.pharmacies)}, ${transportText(v.shift.transport_mode)}`;
-    // De laatste variant loopt door; de eerdere worden afgebakend, zodat de
-    // overgang tussen twee tijden ondubbelzinnig is.
-    const period = i === variants.length - 1
-      ? `vanaf ${fmtDate(v.first)}`
-      : `van ${fmtDate(v.first)} t/m ${fmtDate(v.last)}`;
-    return `- ${base}, ${period}`;
-  });
+  return groupVariants(shifts).map((v) =>
+    `- vanaf ${fmtDate(v.first)}: elke ${dayName(v.shift.weekday)}`
+    + ` ${fmtTime(v.shift.start_time, v.shift.budgeted_end_time)}`
+    + ` bij ${joinNames(v.shift.pharmacies)}, ${transportText(v.shift.transport_mode)}`);
 }
 
 // Eén blok per feit uit de outbox. Zonder aanhef en zonder afsluiting: die zet
@@ -241,6 +249,13 @@ function subjectFor(rows: OutboxRow[]): string {
 
 // De volledige mail. Feiten in de volgorde waarin ze ontstonden: bij een
 // verzetting staat "vervalt" dan boven "je staat nu op", zoals het gebeurd is.
+//
+// Bovenaan staat een PEILDATUM, en dat is geen opsmuk. Alles onder die regel is
+// een momentopname, en daarmee permanent waar: verandert er later iets zonder dat
+// het een bericht oplevert — wat kan, want de vingerafdruk kent geen datums — dan
+// is deze mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
+// en het is de enige manier om ook het rommelige geval te dekken waarin twee
+// tijden door elkaar heen lopen.
 function renderMail(rows: OutboxRow[], courierName: string): { subject: string; text: string } | null {
   const blocks = rows
     .slice()
@@ -253,7 +268,8 @@ function renderMail(rows: OutboxRow[], courierName: string): { subject: string; 
   const body = blocks.map((b) => b.join('\n')).join('\n\n');
   return {
     subject: subjectFor(rows),
-    text: `Hoi ${courierName},\n\n${body}\n\nVragen of verhinderd? Bel de planning.\n`,
+    text: `Hoi ${courierName},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
+        + `Vragen of verhinderd? Bel de planning.\n`,
   };
 }
 

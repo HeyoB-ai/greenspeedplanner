@@ -324,16 +324,51 @@ opnieuw aanmaken, en dat levert twee feiten op: "do 20-08 vervalt" en "je staat
 nu op vr 21-08". Zonder bundeling zijn dat twee losse mails die elkaar lijken
 tegen te spreken, in willekeurige volgorde in de inbox.
 
-## 10. Meerdere tijden worden volledig verwoord
+## 10. Elk bericht is een momentopname onder één peildatum
 
-Bevat het venster meer dan één variant, dan noemt de mail ze allemaal, elk met de
-datum waarop hij ingaat — bijvoorbeeld: donderdag 07:45–12:00 t/m 15-10, daarna
-donderdag 08:15–12:30 vanaf 22-10.
+Boven de inhoud staat één regel: `Stand op 30-07-2026:`. Daaronder worden alle
+varianten genoemd, elk met de datum waarop hij ingaat — en **nooit** met een
+datum waarop hij ophoudt:
 
-**Waarom volledig en niet alleen de nieuwe:** de oude variant staat nog bevestigd
+```
+Stand op 30-07-2026:
+
+Je vaste dienst is gewijzigd. Dit staat er nu:
+- vanaf 13-08-2026: elke donderdag 07:45-12:00 bij Lamberts Apotheek, met de fiets
+- vanaf 22-10-2026: elke donderdag 08:15-12:30 bij Lamberts Apotheek, met de fiets
+Deze afspraak loopt t/m 31-12-2026.
+```
+
+**Waarom volledig en niet alleen de nieuwe variant:** de oude staat nog bevestigd
 en de koerier wordt daar volgende week op verwacht. Alleen de nieuwe noemen zou
 hem op de verkeerde tijd laten komen; verwijzen naar de app maakt de mail
 afhankelijk van een tweede handeling die hij niet per se doet.
+
+**Waarom de peildatum.** De vingerafdruk bevat bewust geen datums (punt 5), want
+anders zou elke volgende bevestiging opnieuw nieuws zijn. Gevolg: een dienst die
+later op een oude tijd bevestigd wordt, verandert `V` niet en levert dus géén
+mail op. Elke uitspraak in het bericht die *vooruit* kijkt kan daardoor stil
+onwaar worden — niet alleen een einddatum, maar ook "elke donderdag 08:15 vanaf
+22-10", want er kan daarna alsnog een 07:45 bijkomen.
+
+Dat is niet te repareren door zorgvuldiger te formuleren; het zit in het signaal.
+Wat de peildatum wél doet, is de **soort fout** veranderen: alles onder die regel
+is waar op dat moment, en blijft dat. Een bericht dat is ingehaald door de
+werkelijkheid is daarmee *onvolledig* in plaats van *onwaar* — een veel goedkopere
+fout, en de enige die ook het rommelige geval dekt waarin twee tijden door elkaar
+heen lopen.
+
+Daarom hoeft `end_date` geen aparte formulering: "Deze afspraak loopt t/m
+31-12-2026" valt onder dezelfde peildatum.
+
+**Wat hier is afgevallen.** Een eerdere opzet bakende de niet-laatste varianten af
+(`van 13-08 t/m 15-10`) en liet alleen de laatste openstaan. Dat leek volledig,
+maar het maakte precies de belofte die het signaal niet kan waarmaken. Het
+alternatief — de grens van niet-laatste varianten in de vingerafdruk opnemen — is
+correct maar maakt de vingerafdruk volgorde-afhankelijk: of een variant zijn grens
+meedraagt zou afhangen van welke variant toevallig de laatste is. Dit onderdeel is
+al twee keer op een subtiliteit in het signaal gestruikeld (de klok-versmalling en
+het spiegelbeeld); een derde erbij om een bijzin te redden is een slechte ruil.
 
 ## 11. Hoe dubbele berichten voorkomen worden
 

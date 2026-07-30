@@ -247,10 +247,16 @@ Accentloos, en per blok staat er wat de koerier moet doen of weten. Een bundel
 krijgt één aanhef en één afsluiting, met een blok per feit in de volgorde waarin
 ze ontstonden.
 
+Boven de inhoud staat een **peildatum** (`Stand op 30-07-2026:`), en regels noemen
+alleen wanneer iets ingaat, nooit wanneer het ophoudt. Reden: de vingerafdruk
+bevat bewust geen datums, dus een later op een oude tijd bevestigde dienst levert
+geen nieuwe mail op. Zonder peildatum zou zo'n bericht onwaar worden; mét is het
+hooguit onvolledig. Zie punt 10 van het ontwerp.
+
 | Soort | Onderwerp | Kern van het blok |
 |---|---|---|
 | `schedule_confirmed` | Je vaste dienst staat vast | `Je staat vast ingepland:` + een regel per variant met ingangsdatum |
-| `schedule_changed` | Je vaste dienst is gewijzigd | `Dit staat er nu:` + alle varianten; de eerdere afgebakend (`van … t/m …`), de laatste open (`vanaf …`) |
+| `schedule_changed` | Je vaste dienst is gewijzigd | `Dit staat er nu:` + alle varianten, elk als `vanaf <datum>: elke <dag> <tijd> bij <apotheek>` |
 | `shift_confirmed` | Je bent ingepland op \<dag\> \<datum\> | `Je bent ingepland op donderdag 30-07-2026, 19:12-21:00 bij X, met de auto.` |
 | `shift_changed` | Je dienst van \<dag\> \<datum\> is gewijzigd | `Dit staat er nu: …` |
 | `shift_cancelled` | Je dienst van … vervalt / gaat naar een andere koerier | `Deze dienst vervalt: … Je hoeft niet te komen.` |
