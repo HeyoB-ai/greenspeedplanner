@@ -34,6 +34,11 @@ const MAIL_REPLY_TO    = Deno.env.get('MAIL_REPLY_TO') ?? '';
 const CRON_SECRET      = Deno.env.get('CRON_SECRET') ?? '';
 const MAX_PER_RUN      = Number(Deno.env.get('MAIL_MAX_PER_RUN') ?? '25');
 
+// Waar de invulpagina van de nadeclaratie staat (fase 6). Zonder deze instelling
+// kan er geen bruikbare link in een nabericht en blijven die berichten wachten —
+// een mail met een kapotte link is erger dan een mail die nog niet ging.
+const DECLARATION_URL  = Deno.env.get('DECLARATION_URL') ?? '';
+
 // ── De poort: fail-closed ────────────────────────────────────────────────
 // Bij de SMS zat de bescherming in de data: alleen ingevoerde nummers konden
 // bereikt worden, en die voerde de planner zelf in. Bij mail heeft élke koerier
@@ -91,8 +96,14 @@ interface OutboxRow {
     transport_mode?: 'bike' | 'car';
     pharmacies?: string[];
     reason?: string;
+    // alleen bij een nabericht (shift_followup)
+    declaration_id?: string;
+    own_car?: boolean;
   };
   created_at: string;
+  // Geen kolom maar een werkveld: de invullink wordt vlak vóór het renderen
+  // gemaakt en bestaat alleen tijdens deze run. Zie de hoofdlus.
+  link?: string;
 }
 
 // ── Tekst ────────────────────────────────────────────────────────────────
@@ -220,13 +231,37 @@ function renderBlock(row: OutboxRow): string[] {
       const what = p.pharmacies ? ` bij ${joinNames(p.pharmacies)}` : '';
       return [`Je vaste dienst${what} komt te vervallen. Je hoeft niet meer te komen.`];
     }
+    case 'shift_followup': {
+      // Zonder werkende link heeft dit blok geen zin: dan liever niets sturen en
+      // het bericht laten wachten tot de link er wel is.
+      if (!row.link || !p.shift_date || !p.start_time) return [];
+      const what = `${dayName(p.weekday ?? 1)} ${fmtDate(p.shift_date)}, ${fmtTime(p.start_time, p.budgeted_end_time)}`
+                 + ` bij ${joinNames(p.pharmacies)}`;
+      const lines = [
+        `Je dienst van ${what} zit erop. Wil je doorgeven hoe lang hij werkelijk duurde?`,
+        row.link,
+      ];
+      if (p.own_car) {
+        // De vraagstelling staat hier en op de pagina in exact dezelfde woorden.
+        // Zonder die definitie telt de een de bezorgroute mee en de ander niet,
+        // en zijn de opgaves achteraf niet met elkaar te vergelijken.
+        lines.push('Reed je op eigen kosten? Geef dan ook de totaal gereden kilometers op,'
+                 + ' vanaf vertrek thuis tot terugkomst thuis.');
+      }
+      return lines;
+    }
     default:
       return [];
   }
 }
 
 function subjectFor(rows: OutboxRow[]): string {
-  if (rows.length > 1) return 'Je planning is bijgewerkt';
+  if (rows.length > 1) {
+    // Een bundel die alléén uit naberichten bestaat gaat niet over de planning.
+    return rows.every((r) => r.kind === 'shift_followup')
+      ? 'Hoe lang duurden je diensten?'
+      : 'Je planning is bijgewerkt';
+  }
   const row = rows[0];
   const p = row.payload;
   const when = p.shift_date
@@ -243,6 +278,8 @@ function subjectFor(rows: OutboxRow[]): string {
         return when ? `Je dienst van ${when} gaat naar een andere koerier` : 'Je dienst gaat naar een andere koerier';
       }
       return when ? `Je dienst van ${when} vervalt` : 'Je dienst vervalt';
+    case 'shift_followup':
+      return when ? `Hoe lang duurde je dienst van ${when}?` : 'Hoe lang duurde je dienst?';
     default:                   return 'Bericht over je planning';
   }
 }
@@ -337,6 +374,19 @@ Deno.serve(async (req) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // Leeftijdscontrole vóór alles: naberichten over diensten van te lang geleden
+  // gaan op 'expired'. Zonder deze stap stuurt een wachtrij die een tijd heeft
+  // stilgestaan — een verkeerd getypte sleutel, een allowlist die dichtstond —
+  // alsnog mail over diensten van weken terug zodra hij weer loopt.
+  // Ook in een dry run, want anders telt zo'n bericht ten onrechte mee.
+  const { data: expired, error: expErr } = await admin.rpc('declaration_expire_stale');
+  if (expErr) {
+    // Niet fataal: de rest van de post moet gewoon door.
+    console.error('[mail] leeftijdscontrole mislukt:', expErr.message);
+  } else if ((expired ?? 0) > 0) {
+    console.warn(`[mail] ${expired} nabericht(en) vervallen: de dienst is te lang geleden.`);
+  }
+
   const { data: pending, error: pendErr } = await admin.rpc('mail_pending_couriers');
   if (pendErr) {
     console.error('[mail] mail_pending_couriers mislukt:', pendErr.message);
@@ -399,6 +449,57 @@ Deno.serve(async (req) => {
       if (rows.length === 0) { skipped++; continue; }  // andere verzender was ons voor
     }
     if (rows.length === 0) continue;
+
+    // 3b. Invullinks maken voor de naberichten.
+    //     Het token wordt HIER gemaakt en niet bij het inschrijven: in de
+    //     database staat alleen de hash, dus een token dat in de outbox-payload
+    //     zou staan is een werkende link die daar blijft liggen. Uitgeven maakt
+    //     een eerdere link ongeldig — dat kan, want een nabericht gaat één keer
+    //     per dienst uit.
+    for (const r of rows) {
+      if (r.kind !== 'shift_followup') continue;
+      const decId = r.payload?.declaration_id;
+      if (!decId) continue;
+
+      if (!DECLARATION_URL) {
+        console.error('[mail] DECLARATION_URL ontbreekt — nabericht blijft wachten.');
+        continue;
+      }
+      if (dryRun) {
+        // Uitgeven is een schrijfactie en zou de vorige link ongeldig maken.
+        r.link = `${DECLARATION_URL}?t=<token wordt pas bij echt verzenden gemaakt>`;
+        continue;
+      }
+
+      const { data: tok, error: tokErr } = await admin.rpc('declaration_issue_token', {
+        p_declaration_id: decId,
+      });
+      const issued = Array.isArray(tok) ? tok[0] : tok;
+      if (tokErr || !issued?.token) {
+        // Al afgehandeld of verlopen. Zonder link gaat dit bericht bij 3c terug
+        // in de wachtrij in plaats van mee te liften op de uitkomst van de bundel.
+        console.error(`[mail] geen invullink voor declaratie ${decId}:`, tokErr?.message ?? 'geen token');
+        continue;
+      }
+      r.link = `${DECLARATION_URL}?t=${issued.token}`;
+    }
+
+    // 3c. Naberichten zonder link teruggeven aan de wachtrij.
+    //     De bundel krijgt straks ÉÉN uitkomst voor al zijn rijen. Zou zo'n rij
+    //     blijven zitten, dan wordt hij als 'sent' afgevinkt terwijl zijn tekst
+    //     nooit is uitgegaan — een verdwenen bericht dat je nergens meer ziet.
+    //     Terugzetten op 'pending' is de veilige kant: dan gaat hij mee zodra de
+    //     link wél gemaakt kan worden, en anders vangt de leeftijdscontrole hem af.
+    const linkless = rows.filter((r) => r.kind === 'shift_followup' && !r.link).map((r) => r.id);
+    if (linkless.length > 0) {
+      if (!dryRun) {
+        const { error: relErr } = await admin.rpc('declaration_release', { p_ids: linkless });
+        if (relErr) console.error('[mail] terugzetten mislukt:', relErr.message);
+      }
+      rows = rows.filter((r) => !(r.kind === 'shift_followup' && !r.link));
+      console.warn(`[mail] ${c.courier_name}: ${linkless.length} nabericht(en) zonder invullink blijven wachten.`);
+      if (rows.length === 0) { skipped++; continue; }
+    }
 
     // 4. Tekst opbouwen.
     const courierName = rows[0].payload?.courier_name ?? c.courier_name;
