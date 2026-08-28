@@ -40,6 +40,8 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `015_signup_role_clamp.sql` | registratie levert altijd een koerier op; accounts daarboven maak je zelf aan (zie de kop van de migratie) |
 | `016_shift_mail.sql` | bevestigingsmail: `courier_announcements` + `mail_outbox` + `mail_sweep()` + triggers + `email_override` |
 | `017_mail_dispatch.sql` | verzendkant: `mail_recipient_for` / `mail_pending_couriers` / `mail_claim_for_courier` / `mail_record_result` |
+| `018_shift_declarations.sql` | nadeclaratie: standplaats, `courier_distances`, `reimbursement_rates`, `shift_declarations` + de rekenregel `declaration_compute()` |
+| `019_declaration_mail.sql` | nadeclaratie: `declaration_sweep()`, de berichtsoort `shift_followup`, de token-functies en de plannerkant |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -56,6 +58,8 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `012_sms_log_test.sql` | selectie van de herinnerings-SMS (concept/begonnen/buiten venster/geen nummer) + claim precies één keer + tijdzonegrens |
 | `014_invitations_rls_test.sql` | koerier mag geen uitnodiging maken en ziet geen tokens; planner wél, inclusief de returning-select van `inviteUser` |
 | `015_signup_role_clamp_test.sql` | `role=superuser` uit metadata wordt courier; `pharmacy_ids` uit metadata genegeerd; zonder rol géén profiel |
+| `018_shift_declarations_test.sql` | de vier takken van de reiskostenregel plus de randen: drempel vervalt bij eigen auto en bij een andere apotheek, nul is niet onbekend, tarief per dienstdatum, km's geweigerd bij een fietsdienst |
+| `019_declaration_mail_test.sql` | sweep (idempotent, venster, vloer, te oude diensten), token uitgeven en gebruiken, indienen, leeftijdscontrole, en dat de link stopt na beoordeling |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
@@ -250,7 +254,7 @@ $$);
 De verzender loopt twee minuten achter op de sweep, zodat een bundel compleet is
 voordat hij verstuurd wordt.
 
-### De zes berichtsoorten
+### De zeven berichtsoorten
 
 Alle tekst staat op één plek: `renderBlock()` en `subjectFor()` in de functie.
 Accentloos, en per blok staat er wat de koerier moet doen of weten. Een bundel
@@ -271,6 +275,134 @@ hooguit onvolledig. Zie punt 10 van het ontwerp.
 | `shift_changed` | Je dienst van \<dag\> \<datum\> is gewijzigd | `Dit staat er nu: …` |
 | `shift_cancelled` | Je dienst van … vervalt / gaat naar een andere koerier | `Deze dienst vervalt: … Je hoeft niet te komen.` |
 | `schedule_cancelled` | Je vaste dienst vervalt | nog niet in gebruik; staat er zodat een onbekend feit geen lege mail oplevert |
+| `shift_followup` | Hoe lang duurde je dienst van \<dag\> \<datum\>? | de invullink van de nadeclaratie (fase 6); bij een eigen auto ook de vraag om de totaal gereden kilometers |
+
+## Nadeclaratie (fase 6) — nog niet aangezet
+
+Het ontwerp met alle redenen staat in
+[`docs/FASE6_NADECLARATIE_ONTWERP.md`](docs/FASE6_NADECLARATIE_ONTWERP.md).
+
+Na afloop van een dienst krijgt de koerier een mail met een link. Achter die link
+vult hij in hoe lang de dienst werkelijk duurde en of hij reiskosten declareert.
+De planner ziet daarna per dienst het opgegeven naast het berekende, met het
+verschil erbij (*Declaraties* in de kop van de app).
+
+De regel:
+
+```
+eigen auto?
++- ja  -> opgegeven km's x autotarief          (own_car)
++- nee -> andere apotheek dan de standplaats?
+          +- ja  -> volledige afstand vergoed   (other_pharmacy)
+          +- nee -> afstand - drempel, min. 0   (above_threshold / none)
+```
+
+Bij eigen auto en bij een andere apotheek vervalt de drempel volledig. Dat is
+tegenintuitief en bewust zo bevestigd; zie punt 1 van het ontwerp.
+
+> ⚠ **Zet de cron voor `declaration_sweep()` nog NIET aan** voordat stap 1 t/m 6
+> hieronder gedaan zijn. `declaration_settings.active_from` beschermt tegen mail
+> over de hele historie, maar alleen als hij klopt.
+
+### Het woonadres wordt niet opgeslagen
+
+Het adres gaat één keer naar de Edge Function `courier-distances`, die het
+geocodeert, de route-afstanden berekent naar álle apotheken waar de koerier aan
+gekoppeld is, en **alleen die afstanden** wegschrijft in `courier_distances`.
+Geen bewaartermijn op adresgegevens, en een lek levert niemands woonplaats op.
+Het invoerveld in *Afstanden* wordt na een geslaagde berekening leeggemaakt.
+
+> ⚠ **Openstaande blokkade:** apotheken zonder `addressLat`/`addressLng` kunnen
+> niet meegerekend worden. Het scherm benoemt ze per koerier en biedt handmatige
+> invoer (`source = 'manual'`). Structureel oplossen doe je met
+> `scripts/backfill-pharmacy-coords.mjs`, en dat vergt eerst adresgegevens op de
+> apotheek zelf.
+
+### De invulpagina
+
+`/declaratie?t=<token>` in dezelfde bundel, gekozen in `src/main.tsx` vóór de
+sessiecontrole. `public/_redirects` stuurt op Netlify alle paden naar
+`index.html`; zonder dat bestand geeft de link een 404 op de CDN.
+
+De pagina praat uitsluitend met de Edge Function `shift-declaration`.
+`shift_declarations` heeft geen enkele RLS-policy en geen rechten voor `anon` of
+`authenticated` — ook een ingelogde planner komt er niet rechtstreeks bij. In de
+database staat alleen de SHA-256-hash van het token; het token zelf wordt pas bij
+het verzenden gemaakt en bestaat verder alleen in de mail.
+
+### Omgevingsvariabelen
+
+| Variabele | Voor | Waarvoor |
+|---|---|---|
+| `DECLARATION_URL` | `send-shift-mail` | basis-URL van de invulpagina, bv. `https://<app>/declaratie`. Ontbreekt hij, dan blijft een nabericht wachten in plaats van met een kapotte link uit te gaan |
+| `DECLARATION_ORIGIN` | beide nieuwe functies | CORS-origin; standaard `*` (er komen geen cookies of sessies aan te pas) |
+| `GOOGLE_MAPS_API_KEY` | `courier-distances` | geocoding + Distance Matrix; dezelfde sleutel als het backfill-script |
+
+### Uitrollen
+
+```powershell
+npx supabase secrets set DECLARATION_URL=https://<app>/declaratie `
+  GOOGLE_MAPS_API_KEY=<google-key>
+npx supabase functions deploy shift-declaration
+npx supabase functions deploy courier-distances
+npx supabase functions deploy send-shift-mail    # uitgebreid met shift_followup
+```
+
+Volgorde, en stap 7 stuurt mail:
+
+1. Migratie 018 draaien, daarna `supabase/tests/018_shift_declarations_test.sql`.
+2. **Tarieven controleren** in `reimbursement_rates`. 018 zet twee startrijen neer
+   (€0,23/km, drempel 10 km). Zonder rij rekent er niets, met een verkeerde rij
+   rekent alles verkeerd. Wijzigen doe je met een `INSERT` met een nieuwe
+   `effective_from`, nooit met een `UPDATE`: die rij zit vast in al uitbetaalde
+   declaraties.
+3. Standplaatsen en afstanden vullen via *Afstanden*.
+4. Migratie 019 draaien, daarna `supabase/tests/019_declaration_mail_test.sql`.
+   Kijk naar de verificatiequery `sweep_zou_oppakken`: dat is het aantal mails
+   dat er uitgaat zodra de cron aan gaat. Te veel? Zet `active_from` hoger.
+5. Edge Functions uitrollen (zie hierboven).
+6. Proefdraaien: `send-shift-mail?dry_run=1`. In een dry run staat er een
+   placeholder in plaats van een token — uitgeven is een schrijfactie en zou een
+   eerder verstuurde link ongeldig maken.
+7. Cron aanzetten en direct verifiëren.
+
+```sql
+SELECT cron.schedule('declaration-sweep', '15 * * * *', $$
+  SELECT public.declaration_sweep();
+$$);
+```
+
+De bestaande `mail-send`-job pikt de naberichten vanzelf op; een derde verzendjob
+is er niet.
+
+> ⚠ **De Authorization-header luidt `'Bearer ' || <sleutel>`** — het woord
+> `Bearer`, een spatie, dán de sleutel. Dit is eerder misgegaan en heeft elf dagen
+> lang stilzwijgend 401's opgeleverd.
+
+Controleren doe je in `net._http_response`, **niet** in `cron.job_run_details`:
+die laatste meldt alleen of de SQL liep, niet wat de andere kant terugzei.
+
+```sql
+SELECT id, status_code, left(content, 300) AS antwoord, created
+FROM net._http_response
+ORDER BY created DESC
+LIMIT 10;
+```
+
+Wat er klaarstaat en wat eruit ging:
+
+```sql
+SELECT o.created_at, o.status, up.name AS koerier,
+       o.payload->>'shift_date' AS dienst, o.error
+FROM public.mail_outbox o
+JOIN public.user_profiles up ON up.id = o.courier_id
+WHERE o.kind = 'shift_followup'
+ORDER BY o.created_at DESC LIMIT 20;
+```
+
+Geeft een RPC vanuit de app een `PGRST202`, dan kent PostgREST de nieuwe functies
+nog niet: herlaad de schema-cache (Supabase doet dat normaal zelf; anders
+`NOTIFY pgrst, 'reload schema';`).
 
 ## Scripts
 
