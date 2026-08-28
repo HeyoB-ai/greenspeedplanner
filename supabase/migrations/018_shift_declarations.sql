@@ -52,7 +52,23 @@ BEGIN;
 --    standplaats niet zetten — dat bepaalt zijn vergoeding.
 -- ────────────────────────────────────────────────────────────────────────
 ALTER TABLE public.user_profiles
-  ADD COLUMN IF NOT EXISTS home_pharmacy_id TEXT REFERENCES public.pharmacies(id);
+  ADD COLUMN IF NOT EXISTS home_pharmacy_id TEXT;
+
+-- De foreign key staat los van de kolom en niet inline, want ADD COLUMN IF NOT
+-- EXISTS slaat het hele statement over zodra de kolom er al is. Bestond de kolom
+-- al zonder key — bijvoorbeeld met de hand aangemaakt — dan zou een inline
+-- REFERENCES stilzwijgend niets doen en hield niets tegen dat er een verwijzing
+-- naar een niet-bestaande apotheek in komt te staan.
+--
+-- De naam is exact wat Postgres zelf zou genereren, zodat een eerdere run met de
+-- inline variant hier wordt opgeruimd in plaats van verdubbeld. Geen ON DELETE:
+-- een apotheek weggooien die iemands standplaats is hoort te stuiten.
+ALTER TABLE public.user_profiles
+  DROP CONSTRAINT IF EXISTS user_profiles_home_pharmacy_id_fkey;
+
+ALTER TABLE public.user_profiles
+  ADD CONSTRAINT user_profiles_home_pharmacy_id_fkey
+  FOREIGN KEY (home_pharmacy_id) REFERENCES public.pharmacies(id);
 
 COMMENT ON COLUMN public.user_profiles.home_pharmacy_id IS
   'Standplaats van een koerier: de apotheek waar hij normaal begint. Bepaalt de '
