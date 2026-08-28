@@ -1,0 +1,3 @@
+# Netlify: alle paden naar de SPA. Zonder deze regel geeft /declaratie?t=... een
+# 404 op de CDN, want er staat geen bestand op dat pad — de route zit in de bundel.
+/*    /index.html   200

@@ -115,3 +115,71 @@ export interface NewShiftInput {
   institutionIds: string[];
   timingReliable: boolean;
 }
+
+// ── Nadeclaratie (fase 6, migraties 018/019) ──────────────────────────────
+
+// Status van één declaratie. 'open' = de koerier heeft nog niets ingevuld.
+export type DeclarationStatus = 'open' | 'submitted' | 'approved' | 'disputed';
+
+// Welke tak van de reiskostenregel gold. Zie migratie 018.
+//  own_car         eigen auto: de opgegeven km's, drempel vervalt
+//  other_pharmacy  andere apotheek dan de standplaats: volledige afstand
+//  above_threshold afstand min drempel
+//  none            binnen de drempel: geen vergoeding
+export type ReimbursementRule = 'own_car' | 'other_pharmacy' | 'above_threshold' | 'none';
+
+// Eén rij uit declaration_overview(): wat de koerier opgaf naast wat het
+// systeem berekende. De namen volgen de functie 1-op-1 (snake_case), zodat de
+// tussenlaag geen twee woordenlijsten hoeft te onderhouden.
+export interface DeclarationRow {
+  declaration_id: string;
+  shift_id: string;
+  status: DeclarationStatus;
+  courier_id: string;
+  courier_name: string;
+  shift_date: string;
+  pharmacies: string[];
+  transport_mode: TransportMode;
+  own_car: boolean;
+  planned_start: string | null;
+  planned_end: string | null;
+  planned_minutes: number | null;
+  actual_start: string | null;
+  actual_end: string | null;
+  actual_minutes: number | null;
+  claims_travel: boolean | null;
+  own_car_km: number | null;
+  courier_note: string | null;
+  computed_distance_km: number | null;
+  computed_reimbursable_km: number | null;
+  computed_rule: ReimbursementRule | null;
+  computed_pharmacy_name: string | null;
+  computed_incomplete: boolean;
+  computed_reason: string | null;
+  rate_per_km: number | null;
+  threshold_km: number | null;
+  amount_eur: number | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  reviewer_name: string | null;
+  review_note: string | null;
+}
+
+// Standplaats en afstandsdekking per koerier (courier_home_overview()).
+export interface CourierHome {
+  courierId: string;
+  courierName: string;
+  homePharmacyId: string | null;
+  distances: number;              // aantal apotheken met een bekende afstand
+  computedAt: string | null;
+}
+
+// Eén afstand uit courier_distances. Het woonadres staat er bewust niet bij:
+// dat wordt nergens bewaard.
+export interface CourierDistance {
+  courierId: string;
+  pharmacyId: string;
+  distanceKm: number;
+  source: 'route' | 'fallback' | 'manual';
+  computedAt: string;
+}

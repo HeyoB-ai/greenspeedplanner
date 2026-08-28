@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, LogOut, Phone, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CalendarClock, FileText, Home, LogOut, Phone, RefreshCw, Trash2 } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -8,6 +8,8 @@ import WeekOverview from './planner/WeekOverview';
 import ShiftForm from './planner/ShiftForm';
 import PharmacySchedule from './planner/PharmacySchedule';
 import CourierContacts from './planner/CourierContacts';
+import CourierAddresses from './planner/CourierAddresses';
+import Declarations from './planner/Declarations';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
 import { TYPE_STYLES } from './planner/constants';
@@ -28,6 +30,8 @@ export default function App() {
   const [deleteError, setDeleteError] = useState('');
   const [scheduleTarget, setScheduleTarget] = useState<{ id: string; name: string } | null>(null);
   const [showContacts, setShowContacts] = useState(false);
+  const [showAddresses, setShowAddresses] = useState(false);
+  const [showDeclarations, setShowDeclarations] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
@@ -117,6 +121,20 @@ export default function App() {
             title="Mobiele nummers van koeriers beheren"
           >
             <Phone size={15} /> Nummers
+          </button>
+          <button
+            onClick={() => setShowAddresses(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Standplaats en reisafstanden per koerier"
+          >
+            <Home size={15} /> Afstanden
+          </button>
+          <button
+            onClick={() => setShowDeclarations(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Wat koeriers na afloop opgaven, naast wat het systeem berekende"
+          >
+            <FileText size={15} /> Declaraties
           </button>
           <button
             onClick={() => setRefreshSignal((n) => n + 1)}
@@ -229,6 +247,10 @@ export default function App() {
       )}
 
       {showContacts && <CourierContacts onClose={() => setShowContacts(false)} />}
+
+      {showAddresses && <CourierAddresses onClose={() => setShowAddresses(false)} />}
+
+      {showDeclarations && <Declarations onClose={() => setShowDeclarations(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule
