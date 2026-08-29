@@ -297,7 +297,13 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
       {error && <p className="text-sm text-red-600">{error}</p>}
       {loading && <p className="text-sm text-slate-500">Diensten laden…</p>}
 
-      {/* Raster */}
+      {/* Raster.
+          De apotheekkolom blijft staan bij horizontaal schuiven en heeft daarvoor
+          z-10 nodig, anders schuiven de dienstcellen eroverheen. Let op: een
+          element met een z-index ligt bóven elk positioned element zónder, hoe
+          laat dat ook in de DOM staat. Elke modal in deze app moet er dus een
+          hebben — ze staan allemaal op z-50. Zonder dat keek je door de overlay
+          heen tegen deze kolom aan. */}
       <div className="overflow-x-auto border border-slate-200 rounded-lg">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -376,7 +382,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
       {/* Bulk-bevestiging van alle concepten in de zichtbare week */}
       {showBulkConfirm && (
         <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
           onClick={() => !confirmBusy && setShowBulkConfirm(false)}
         >
           <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>

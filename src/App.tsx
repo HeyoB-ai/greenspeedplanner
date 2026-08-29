@@ -190,7 +190,7 @@ export default function App() {
 
       {deletingShift && (
         <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
           onClick={() => !deleteBusy && setDeletingShift(null)}
         >
           <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>

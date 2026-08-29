@@ -92,7 +92,7 @@ export default function Declarations({ onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
       {/* Breed genoeg voor acht kolommen met namen erin. max-w-[95vw] houdt hem
           op een smal scherm binnen beeld; de tabel zelf krijgt hieronder een
           min-breedte, zodat kolommen bij ruimtegebrek een schuifbalk opleveren
