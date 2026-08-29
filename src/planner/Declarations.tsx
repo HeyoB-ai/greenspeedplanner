@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, FileText, RefreshCw, Undo2, X } from 'lucide-react';
+import { AlertTriangle, Check, FileText, Info, RefreshCw, Undo2, X } from 'lucide-react';
 import { DeclarationRow } from '../types';
 import {
   RULE_LABELS, STATUS_LABELS, euroText, getDeclarations, hoursText, kmText,
@@ -93,7 +93,14 @@ export default function Declarations({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-6xl my-8" onClick={(e) => e.stopPropagation()}>
+      {/* Breed genoeg voor acht kolommen met namen erin. max-w-[95vw] houdt hem
+          op een smal scherm binnen beeld; de tabel zelf krijgt hieronder een
+          min-breedte, zodat kolommen bij ruimtegebrek een schuifbalk opleveren
+          in plaats van afgekapte tekst. */}
+      <div
+        className="bg-white rounded-xl shadow-lg w-full max-w-[95vw] xl:max-w-[88rem] my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <h2 className="font-semibold text-slate-800 inline-flex items-center gap-2">
             <FileText size={16} className="text-green-700" /> Nadeclaraties
@@ -150,7 +157,10 @@ export default function Declarations({ onClose }: Props) {
 
           {shown.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* min-w dwingt af dat de kolommen hun natuurlijke breedte houden.
+                  Past dat niet, dan schuift deze tabel horizontaal — dat is de
+                  bedoeling; namen half tonen is dat niet. */}
+              <table className="w-full min-w-[68rem] text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
                     <th className="py-2 pr-3 font-medium">Dienst</th>
@@ -173,28 +183,46 @@ export default function Declarations({ onClose }: Props) {
                     return (
                       <tr key={r.declaration_id} className={r.computed_incomplete ? 'bg-amber-50/60' : undefined}>
                         <td className="py-2 pr-3 align-top">
-                          <div className="tabular-nums">{r.shift_date}</div>
+                          <div className="tabular-nums whitespace-nowrap">{r.shift_date}</div>
                           <div className="text-xs text-slate-500">{(r.pharmacies ?? []).join(', ')}</div>
                         </td>
                         <td className="py-2 px-3 align-top">
-                          {r.courier_name}
+                          <span className="whitespace-nowrap">{r.courier_name}</span>
                           <div className="text-xs text-slate-500">
                             {r.transport_mode === 'car' ? (r.own_car ? 'eigen auto' : 'auto') : 'fiets'}
                           </div>
                         </td>
-                        <td className="py-2 px-3 align-top tabular-nums">
-                          {r.planned_start && r.planned_end ? `${r.planned_start}–${r.planned_end}` : (r.planned_start ?? '—')}
-                          <div className="text-xs text-slate-500">{minutesText(r.planned_minutes)}</div>
+                        {/* Zonder budgeted_end_time valt er niets te vergelijken.
+                            Dat met zoveel woorden zeggen, want een kaal streepje
+                            onder een starttijd leest als een storing. */}
+                        <td className="py-2 px-3 align-top tabular-nums whitespace-nowrap">
+                          {r.planned_end ? (
+                            <>
+                              {r.planned_start}–{r.planned_end}
+                              <div className="text-xs text-slate-500">{minutesText(r.planned_minutes)}</div>
+                            </>
+                          ) : (
+                            <>
+                              {r.planned_start ? `vanaf ${r.planned_start}` : '—'}
+                              <div className="text-xs text-slate-400">geen eindtijd gepland</div>
+                            </>
+                          )}
                         </td>
-                        <td className="py-2 px-3 align-top tabular-nums">
+                        <td className="py-2 px-3 align-top tabular-nums whitespace-nowrap">
                           {r.actual_start && r.actual_end ? `${r.actual_start}–${r.actual_end}` : '—'}
                           <div className="text-xs text-slate-500">{minutesText(r.actual_minutes)}</div>
                         </td>
-                        <td className="py-2 px-3 align-top tabular-nums">
-                          {diff == null ? '—' : (
+                        <td className="py-2 px-3 align-top tabular-nums whitespace-nowrap">
+                          {diff != null ? (
                             <span className={Math.abs(diff) >= 30 ? 'font-medium text-amber-700' : 'text-slate-600'}>
                               {diff > 0 ? '+' : ''}{minutesText(diff)}
                             </span>
+                          ) : r.planned_minutes == null ? (
+                            // Er is geen geplande duur; leeg laten zou lezen als
+                            // "geen verschil".
+                            <span className="text-xs text-slate-400">niets te vergelijken</span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
                           )}
                         </td>
                         <td className="py-2 px-3 align-top">
@@ -315,19 +343,31 @@ export default function Declarations({ onClose }: Props) {
             </div>
           )}
 
-          {/* Alleen tonen als er een rij is: de termijn komt uit die rijen mee en
-              staat nergens in deze code, dus zonder rijen is er ook geen getal. */}
-          {shown.length > 0 && (
-            <p className="text-xs text-slate-400">
-              De verwachting is dat een koerier binnen {shown[0].expected_within_hours} uur na zijn
-              dienst doorgeeft; buiten die termijn staat amber. Het is geen grens — de invullink blijft
-              werken, en te laat ingevuld is nog altijd ingevuld.
-            </p>
-          )}
-          <p className="text-xs text-slate-400">
-            Bij eigen auto geeft de koerier zelf de kilometers op; dat is niet controleerbaar en zo bedoeld.
-            Het berekende getal ernaast is een referentie om afwijkingen te zien, geen afkeuringsgrond.
-          </p>
+          {/* Twee dingen die je één keer moet lezen en daarna weet. Permanent in
+              beeld kosten ze elke keer ruimte onder de tabel; ingeklapt blijven
+              ze opvraagbaar op de plek waar de vraag opkomt. <details> is
+              native, dus geen state en gewoon toetsenbord-bedienbaar. */}
+          <details className="group">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden">
+              <Info size={13} />
+              Hoe lees ik dit overzicht?
+            </summary>
+            <div className="mt-2 space-y-2 border-l-2 border-slate-100 pl-3 text-xs text-slate-500">
+              {/* De termijn komt uit de rijen mee en staat nergens in deze code,
+                  dus zonder rijen is er ook geen getal om te noemen. */}
+              {shown.length > 0 && (
+                <p>
+                  De verwachting is dat een koerier binnen {shown[0].expected_within_hours} uur na zijn
+                  dienst doorgeeft; buiten die termijn staat amber. Het is geen grens — de invullink blijft
+                  werken, en te laat ingevuld is nog altijd ingevuld.
+                </p>
+              )}
+              <p>
+                Bij eigen auto geeft de koerier zelf de kilometers op; dat is niet controleerbaar en zo bedoeld.
+                Het berekende getal ernaast is een referentie om afwijkingen te zien, geen afkeuringsgrond.
+              </p>
+            </div>
+          </details>
         </div>
       </div>
     </div>
