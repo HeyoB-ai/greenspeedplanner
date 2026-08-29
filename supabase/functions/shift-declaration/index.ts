@@ -133,10 +133,21 @@ Deno.serve(async (req) => {
     });
 
     if (error) {
-      // 28000 zet declaration_submit zelf bij een ongeldige of verlopen link.
+      // 28000: het token bestaat niet. Eén nietszeggend antwoord, zodat er uit
+      // het proberen van tokens niets te leren valt.
       if (error.code === '28000') return json({ error: 'link_ongeldig' }, 404);
-      // De overige meldingen uit de functie zijn bewust leesbaar Nederlands
-      // ('Vul het aantal gereden kilometers in.') en mogen zo naar de pagina.
+
+      // 45xxx (migratie 022): het token klopt, maar er valt niets meer op te
+      // slaan — verlopen, in behandeling, of al goedgekeurd. De melding zegt
+      // wélke van de drie; `closed` vertelt de pagina dat het formulier dicht
+      // moet in plaats van een foutregel onder de knop te tonen.
+      if (error.code?.startsWith('45')) {
+        console.log('[declaratie] afgesloten:', error.code, error.message);
+        return json({ error: error.message, closed: true }, 409);
+      }
+
+      // De rest zijn invoercontroles uit de functie, bewust leesbaar Nederlands
+      // ('Vul het aantal gereden kilometers in.'), en die mogen zo naar de pagina.
       console.warn('[declaratie] indienen geweigerd:', error.message);
       return json({ error: error.message }, 400);
     }

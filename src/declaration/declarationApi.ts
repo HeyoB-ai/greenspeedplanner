@@ -40,10 +40,18 @@ export interface SubmitInput {
   note: string | null;
 }
 
-// Eén melding voor alle gevallen waarin de link niet werkt: onbekend, verlopen
-// of al afgehandeld. De server maakt dat onderscheid ook niet naar buiten.
+// Het token bestaat niet. Eén nietszeggende melding, want de server maakt hier
+// bewust geen onderscheid: uit het proberen van tokens valt zo niets te leren.
 export class LinkInvalidError extends Error {
   constructor() { super('link_ongeldig'); }
+}
+
+// Het token klopt wél, maar er valt niets meer op te slaan: de link is verlopen,
+// de planning kijkt ernaar, of de declaratie is al goedgekeurd (migratie 022).
+// De server levert de bijpassende zin aan; die staat niet in deze code, zodat er
+// maar één plek is waar die tekst vandaan komt.
+export class DeclarationClosedError extends Error {
+  constructor(message: string) { super(message); }
 }
 
 function endpoint(): string {
@@ -63,6 +71,7 @@ async function parse(res: Response): Promise<any> {
   try { body = await res.json(); } catch { /* leeg antwoord */ }
   if (res.ok) return body;
   if (body?.error === 'link_ongeldig') throw new LinkInvalidError();
+  if (body?.closed) throw new DeclarationClosedError(body.error);
   throw new Error(body?.error ?? 'Er ging iets mis. Probeer het later opnieuw.');
 }
 

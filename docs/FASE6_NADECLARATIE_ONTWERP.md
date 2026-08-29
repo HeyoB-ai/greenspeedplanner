@@ -130,8 +130,21 @@ loggen**. Anders vult niemand het in.
   `anon` of `authenticated`. De pagina praat uitsluitend met de Edge Function
   `shift-declaration`, die als service-role draait — in lijn met hoe migratie 017
   is opgezet. Ook een ingelogde planner komt niet rechtstreeks bij die tabel.
-* Onbekend, verlopen en al-afgehandeld geven alle drie hetzelfde antwoord. Uit
-  het proberen van tokens valt zo niets te leren.
+* Een **onbekend** token geeft één nietszeggend antwoord. Uit het proberen van
+  tokens valt zo niets te leren.
+* Is het token wél bekend, dan hoort de houder te weten waar hij aan toe is
+  (migratie 022): verlopen, in behandeling bij de planning, of al goedgekeurd —
+  elk met een eigen melding en een eigen SQLSTATE (45001/45002/45003), zodat de
+  pagina het formulier kan sluiten in plaats van een foutregel te tonen onder een
+  knop die het toch niet doet. Die informatie komt pas beschikbaar ná het
+  vaststellen dat de aanvrager een geldig token heeft, en dat is precies waarom
+  `declaration_submit()` eerst op de hash alleen zoekt en pas daarna oordeelt.
+  Bij goedgekeurd én verlopen wint de status: dat is het nuttigste ware antwoord.
+
+  Let op: op de **laadkant** (`declaration_by_token()`) is dat onderscheid er nog
+  niet. Wie een goedgekeurde link opent, krijgt nog steeds het algemene "deze link
+  werkt niet meer"-scherm. Dat is niet fout, maar wel inconsistent met wat het
+  indienen nu zegt.
 
 ### Waarom het token pas bij het verzenden gemaakt wordt
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Clock, MapPin } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Info, MapPin } from 'lucide-react';
 import {
-  DeclarationView, LinkInvalidError, durationText, formatDate, joinNames,
-  loadDeclaration, submitDeclaration,
+  DeclarationClosedError, DeclarationView, LinkInvalidError, durationText, formatDate,
+  joinNames, loadDeclaration, submitDeclaration,
 } from './declarationApi';
 
 interface Props {
@@ -17,6 +17,9 @@ export default function DeclarationPage({ token }: Props) {
   const [expectedHours, setExpectedHours] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
+  // Gezet zodra de server zegt dat er niets meer op te slaan valt: verlopen, in
+  // behandeling, of goedgekeurd. De tekst komt van de server mee.
+  const [closed, setClosed] = useState('');
   const [error, setError] = useState('');
 
   const [start, setStart] = useState('');
@@ -76,6 +79,7 @@ export default function DeclarationPage({ token }: Props) {
       setSaved(true);
     } catch (e: any) {
       if (e instanceof LinkInvalidError) setInvalid(true);
+      else if (e instanceof DeclarationClosedError) setClosed(e.message);
       else setError(e?.message ?? 'Opslaan mislukt.');
     } finally {
       setBusy(false);
@@ -98,6 +102,27 @@ export default function DeclarationPage({ token }: Props) {
               Hij is verlopen, al afgehandeld, of hoort niet bij een dienst. Bel of mail de planning
               als je nog iets wilt doorgeven.
             </p>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
+  // Er valt niets meer op te slaan. Dan is een rode regel onder een knop die het
+  // toch niet doet misleidend: het formulier gaat dicht en de reden staat er.
+  if (closed) {
+    return (
+      <Shell>
+        <div className="flex items-start gap-2 text-slate-700">
+          <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
+          <div>
+            <p className="font-semibold text-slate-800">Dit staat vast</p>
+            <p className="text-sm mt-1">{closed}</p>
+            {view && (
+              <p className="text-xs text-slate-500 mt-2">
+                Het gaat om je dienst van {formatDate(view.shift_date)} bij {joinNames(view.pharmacies)}.
+              </p>
+            )}
           </div>
         </div>
       </Shell>
