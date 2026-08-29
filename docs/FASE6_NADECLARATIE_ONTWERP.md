@@ -141,10 +141,17 @@ loggen**. Anders vult niemand het in.
   `declaration_submit()` eerst op de hash alleen zoekt en pas daarna oordeelt.
   Bij goedgekeurd én verlopen wint de status: dat is het nuttigste ware antwoord.
 
-  Let op: op de **laadkant** (`declaration_by_token()`) is dat onderscheid er nog
-  niet. Wie een goedgekeurde link opent, krijgt nog steeds het algemene "deze link
-  werkt niet meer"-scherm. Dat is niet fout, maar wel inconsistent met wat het
-  indienen nu zegt.
+  Sinds **migratie 023** geldt hetzelfde op de laadkant: `declaration_by_token()`
+  geeft `approved` en `disputed` ook terug, met `review_note` erbij, en de pagina
+  toont dan een leesweergave — wat er destijds is doorgegeven, met het bericht van
+  de planning erboven, zonder velden en zonder opslaanknop. Een verlopen of
+  onbekend token blijft afgewezen zoals het was.
+
+  Wat er getoond mag worden en wat er gewijzigd mag worden zijn daarmee twee
+  aparte vragen, elk in hun eigen functie. Ze zaten in één filter, en juist
+  daardoor was "al beoordeeld" niet te onderscheiden van "kapotte link". De
+  meldingen uit 022 blijven nodig: de planning kan goedkeuren terwijl het
+  formulier al openstaat, en dan loopt de koerier er pas bij het opslaan tegenaan.
 
 ### Waarom het token pas bij het verzenden gemaakt wordt
 

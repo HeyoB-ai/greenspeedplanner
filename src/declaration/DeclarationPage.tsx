@@ -133,6 +133,14 @@ export default function DeclarationPage({ token }: Props) {
     return <Shell><p className="text-red-600 text-sm">{error || 'Laden mislukt.'}</p></Shell>;
   }
 
+  // ── Beoordeeld: lezen, niet invullen ───────────────────────────────────
+  // Sinds migratie 023 geeft de server deze twee statussen ook terug. De link
+  // werkt dus, er valt alleen niets meer te wijzigen. Invoervelden en een
+  // opslaanknop tonen zou een belofte zijn die de server niet nakomt.
+  if (view.status === 'approved' || view.status === 'disputed') {
+    return <ReadOnlyView view={view} />;
+  }
+
   const duration = durationText(start, end);
   const wantsKm = claims === true && view.own_car;
 
@@ -155,22 +163,7 @@ export default function DeclarationPage({ token }: Props) {
 
       {/* Ter herkenning: welke dienst dit is. Alleen deze dienst, en niets over
           andere mensen. */}
-      <dl className="mt-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm space-y-1.5">
-        <div className="flex items-start gap-2">
-          <Clock size={15} className="mt-0.5 shrink-0 text-slate-400" />
-          <dd>
-            {formatDate(view.shift_date)}
-            <span className="text-slate-500">
-              {' · gepland '}
-              {view.budgeted_end_time ? `${view.start_time}–${view.budgeted_end_time}` : `vanaf ${view.start_time}`}
-            </span>
-          </dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <MapPin size={15} className="mt-0.5 shrink-0 text-slate-400" />
-          <dd>{joinNames(view.pharmacies)}</dd>
-        </div>
-      </dl>
+      <ShiftFacts view={view} />
 
       {saved && (
         <div className="mt-4 flex items-start gap-2 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm p-3">
@@ -283,6 +276,105 @@ export default function DeclarationPage({ token }: Props) {
       <p className="text-xs text-slate-400 mt-4">
         Deze link hoort bij deze ene dienst. Deel hem niet.
       </p>
+    </Shell>
+  );
+}
+
+// Het dienstblok ter herkenning. Zowel het formulier als de leesweergave tonen
+// dit, en het hoort er in beide gevallen hetzelfde uit te zien.
+function ShiftFacts({ view }: { view: DeclarationView }) {
+  return (
+    <dl className="mt-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm space-y-1.5">
+      <div className="flex items-start gap-2">
+        <Clock size={15} className="mt-0.5 shrink-0 text-slate-400" />
+        <dd>
+          {formatDate(view.shift_date)}
+          <span className="text-slate-500">
+            {' · gepland '}
+            {view.budgeted_end_time ? `${view.start_time}–${view.budgeted_end_time}` : `vanaf ${view.start_time}`}
+          </span>
+        </dd>
+      </div>
+      <div className="flex items-start gap-2">
+        <MapPin size={15} className="mt-0.5 shrink-0 text-slate-400" />
+        <dd>{joinNames(view.pharmacies)}</dd>
+      </div>
+    </dl>
+  );
+}
+
+// Wat er te zien is als de planning er al naar gekeken heeft. Geen velden, geen
+// knop: alleen wat de koerier destijds opgaf en wat de planning ervan vond.
+function ReadOnlyView({ view }: { view: DeclarationView }) {
+  const approved = view.status === 'approved';
+  const duration = view.actual_start && view.actual_end
+    ? durationText(view.actual_start, view.actual_end)
+    : null;
+
+  return (
+    <Shell>
+      <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+        approved
+          ? 'bg-green-50 border-green-200 text-green-800'
+          : 'bg-amber-50 border-amber-200 text-amber-800'
+      }`}>
+        {approved
+          ? <Check size={16} className="mt-0.5 shrink-0" />
+          : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
+        <div>
+          <p className="font-semibold">
+            {approved ? 'Goedgekeurd' : 'De planning kijkt hiernaar'}
+          </p>
+          <p className="mt-1">
+            {approved
+              ? 'Deze opgave staat vast en kan niet meer worden aangepast.'
+              : 'Er is een vraag over deze opgave. Wijzigen gaat via de planning; neem daar even contact mee op.'}
+          </p>
+        </div>
+      </div>
+
+      {view.review_note && (
+        <div className="mt-3 rounded-lg border border-slate-200 p-3 text-sm">
+          <p className="text-xs text-slate-500">Bericht van de planning</p>
+          <p className="mt-0.5 text-slate-700">{view.review_note}</p>
+        </div>
+      )}
+
+      <ShiftFacts view={view} />
+
+      {/* Wat de koerier destijds heeft doorgegeven. Alleen zijn eigen opgave —
+          geen afstanden of bedragen uit de berekening. */}
+      <section className="mt-4">
+        <h2 className="text-sm font-semibold text-slate-800">Wat je hebt doorgegeven</h2>
+        <dl className="mt-2 space-y-1.5 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Gewerkt</dt>
+            <dd className="tabular-nums text-right">
+              {view.actual_start && view.actual_end
+                ? <>{view.actual_start}–{view.actual_end}{duration && <span className="text-slate-500"> · {duration}</span>}</>
+                : <span className="text-slate-400">niets ingevuld</span>}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Reiskosten</dt>
+            <dd className="text-right">
+              {view.claims_travel === null && <span className="text-slate-400">niets ingevuld</span>}
+              {view.claims_travel === false && 'niet gedeclareerd'}
+              {view.claims_travel === true && (
+                view.own_car_km != null
+                  ? <span className="tabular-nums">{String(view.own_car_km).replace('.', ',')} km eigen auto</span>
+                  : 'gedeclareerd'
+              )}
+            </dd>
+          </div>
+          {view.courier_note && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Opmerking</dt>
+              <dd className="text-right text-slate-700">{view.courier_note}</dd>
+            </div>
+          )}
+        </dl>
+      </section>
     </Shell>
   );
 }

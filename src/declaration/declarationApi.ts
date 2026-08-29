@@ -16,7 +16,10 @@ export const declarationConfigured = !!URL_BASE && !!ANON;
 // herkenning — geen gegevens van anderen, en geen berekende bedragen.
 export interface DeclarationView {
   declaration_id: string;
-  status: 'open' | 'submitted';
+  // Sinds migratie 023 komen 'approved' en 'disputed' ook terug: de link werkt
+  // dan nog, er valt alleen niets meer in te vullen. De pagina toont die twee
+  // als leesweergave.
+  status: 'open' | 'submitted' | 'approved' | 'disputed';
   courier_name: string;
   shift_date: string;              // 'YYYY-MM-DD'
   start_time: string;              // 'HH:MM'
@@ -30,6 +33,9 @@ export interface DeclarationView {
   own_car_km: number | null;
   courier_note: string | null;
   submitted_at: string | null;
+  // Waarom de planning betwist heeft. Bij goedgekeurd meestal leeg; bij betwist
+  // is dit het enige wat de koerier verder helpt.
+  review_note: string | null;
 }
 
 export interface SubmitInput {
