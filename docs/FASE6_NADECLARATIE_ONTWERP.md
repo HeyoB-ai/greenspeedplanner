@@ -65,11 +65,30 @@ stilzwijgend 0 vergoed. Een planner die "€ 0,00" ziet moet kunnen weten of dat
 ### Welke apotheek bij een dienst over meerdere apotheken
 
 `shift_pharmacies` is m:n, dus een dienst kan meer dan één apotheek hebben.
-Staat de standplaats ertussen, dan is dát de bestemming — daar begint de koerier.
-Anders wordt de apotheek met de **grootste** bekende afstand genomen: waar hij
-werkelijk begonnen is valt niet vast te stellen, en dan is de keuze die de
-koerier niet benadeelt de enige verdedigbare. Welke apotheek het werd staat in
-`computed_pharmacy_id` en het plannerscherm toont hem, zodat het na te lopen is.
+
+De standplaatstak geldt alleen als **álle** apotheken van de dienst de
+standplaats zijn. Zit er één andere bij, dan moet de koerier ergens anders heen
+en is het `other_pharmacy`; de bestemming is dan de apotheek met de **grootste**
+bekende afstand. Waar hij werkelijk begonnen is valt niet vast te stellen, en dan
+is de keuze die de koerier niet benadeelt de enige verdedigbare. Welke apotheek
+het werd staat in `computed_pharmacy_id` en het plannerscherm toont hem.
+
+Dit is aangescherpt in **migratie 020**. Daarvóór won de standplaats zodra hij
+érgens tussen de apotheken zat, waardoor een dienst bij de eigen standplaats én
+een apotheek verderop onder de drempelregel viel.
+
+### Een ontbrekende afstand is onbekend, niet nul en niet "de verste bekende"
+
+De bestemming in de `other_pharmacy`-tak wordt gekozen met een join op
+`courier_distances`. Een apotheek zonder bekende afstand valt uit die join weg,
+en dan wint er een die dichterbij ligt: de uitkomst is dan geen maximum maar een
+ondergrens. Zonder maatregel is dat een stilzwijgend te lage vergoeding.
+
+Sinds migratie 020 geldt daarom: zit er in de dienst een apotheek waarvoor geen
+afstand bekend is, dan is "de verste" niet vast te stellen. Het bedrag wordt
+`NULL` en de reden noemt de apotheken bij naam, zodat de planner ze kan aanvullen
+en op Hertellen kan drukken. Bij eigen auto verandert er niets: daar komt het
+bedrag van de koerier en is de afstand alleen referentie.
 
 ---
 
@@ -226,7 +245,7 @@ andere keten.
 | `courier_distances` | 018 | afstand koerier ↔ apotheek, zonder adres |
 | `reimbursement_rates` | 018 | tarief + drempel, met ingangsdatum |
 | `shift_declarations` | 018 | één rij per dienst: opgave én berekening |
-| `declaration_compute()` | 018 | de rekenregel, op één plek |
+| `declaration_compute()` | 018, 020 | de rekenregel, op één plek |
 | `declaration_settings` | 019 | vloer, maximale leeftijd, geldigheid link |
 | `declaration_sweep()` | 019 | afgelopen diensten → declaratie + bericht |
 | `declaration_expire_stale()` | 019 | te oude post afsluiten |
@@ -257,7 +276,10 @@ De volgorde is niet vrijblijvend: stap 7 stuurt mail.
 3. **Standplaatsen en afstanden vullen** via *Afstanden* in de planner.
    ⚠ Zolang apotheken geen adresgegevens hebben, kan er voor die apotheken geen
    afstand berekend worden. Het scherm benoemt ze en biedt handmatige invoer.
-4. **Migratie 019** draaien, daarna `supabase/tests/019_declaration_mail_test.sql`.
+4. **Migratie 019 en 020** draaien, daarna
+   `supabase/tests/019_declaration_mail_test.sql` en
+   `supabase/tests/020_declaration_branch_test.sql`. 020 telt bestaande, nog niet
+   goedgekeurde declaraties opnieuw door onder de aangescherpte regel.
    Controleer meteen de verificatiequery *sweep_zou_oppakken*: dat is het aantal
    mails dat er uitgaat zodra de cron aan gaat. Loopt dat in de tientallen, zet
    `active_from` dan hoger.

@@ -42,6 +42,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `017_mail_dispatch.sql` | verzendkant: `mail_recipient_for` / `mail_pending_couriers` / `mail_claim_for_courier` / `mail_record_result` |
 | `018_shift_declarations.sql` | nadeclaratie: standplaats, `courier_distances`, `reimbursement_rates`, `shift_declarations` + de rekenregel `declaration_compute()` |
 | `019_declaration_mail.sql` | nadeclaratie: `declaration_sweep()`, de berichtsoort `shift_followup`, de token-functies en de plannerkant |
+| `020_declaration_branch.sql` | de standplaatstak geldt alleen als álle apotheken van de dienst de standplaats zijn; een ontbrekende afstand levert onbekend op in plaats van een te laag bedrag |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -60,6 +61,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `015_signup_role_clamp_test.sql` | `role=superuser` uit metadata wordt courier; `pharmacy_ids` uit metadata genegeerd; zonder rol géén profiel |
 | `018_shift_declarations_test.sql` | de vier takken van de reiskostenregel plus de randen: drempel vervalt bij eigen auto en bij een andere apotheek, nul is niet onbekend, tarief per dienstdatum, km's geweigerd bij een fietsdienst |
 | `019_declaration_mail_test.sql` | sweep (idempotent, venster, vloer, te oude diensten), token uitgeven en gebruiken, indienen, leeftijdscontrole, en dat de link stopt na beoordeling |
+| `020_declaration_branch_test.sql` | de tak-keuze bij meerdere apotheken: één andere apotheek is genoeg voor `other_pharmacy` met de volle afstand, een ontbrekende afstand geeft onbekend mét naam, en bij eigen auto raakt dat alleen de referentie |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
@@ -357,7 +359,9 @@ Volgorde, en stap 7 stuurt mail:
    `effective_from`, nooit met een `UPDATE`: die rij zit vast in al uitbetaalde
    declaraties.
 3. Standplaatsen en afstanden vullen via *Afstanden*.
-4. Migratie 019 draaien, daarna `supabase/tests/019_declaration_mail_test.sql`.
+4. Migratie 019 en 020 draaien, daarna `supabase/tests/019_declaration_mail_test.sql`
+   en `supabase/tests/020_declaration_branch_test.sql`. 020 telt bestaande, nog
+   niet goedgekeurde declaraties opnieuw door onder de aangescherpte regel.
    Kijk naar de verificatiequery `sweep_zou_oppakken`: dat is het aantal mails
    dat er uitgaat zodra de cron aan gaat. Te veel? Zet `active_from` hoger.
 5. Edge Functions uitrollen (zie hierboven).
