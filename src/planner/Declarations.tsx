@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, FileText, RefreshCw, Undo2, X } from 'lucide-react';
 import { DeclarationRow } from '../types';
 import {
-  RULE_LABELS, STATUS_LABELS, euroText, getDeclarations, kmText, minutesText,
-  recomputeOpenDeclarations, reviewDeclaration,
+  RULE_LABELS, STATUS_LABELS, euroText, getDeclarations, hoursText, kmText,
+  minutesText, recomputeOpenDeclarations, reviewDeclaration,
 } from './declarationService';
 
 interface Props {
@@ -226,6 +226,26 @@ export default function Declarations({ onClose }: Props) {
                           <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLES[r.status]}`}>
                             {STATUS_LABELS[r.status]}
                           </span>
+                          {/* Tijdigheid: ingediend → hoe lang na afloop; nog niet
+                              ingediend → hoe lang de rij al openstaat. Amber is
+                              een signaal, geen afkeuring: de link blijft werken
+                              en te laat ingevuld is nog altijd ingevuld. */}
+                          {r.submitted_in_time !== null && (
+                            <div
+                              className={`text-xs mt-0.5 ${r.submitted_in_time ? 'text-slate-500' : 'text-amber-700'}`}
+                              title={`Ingediend ${hoursText(r.hours_after_end)} na afloop van de dienst. Verwacht binnen ${r.expected_within_hours} uur.`}
+                            >
+                              na {hoursText(r.hours_after_end)}
+                              {!r.submitted_in_time && ` · buiten ${r.expected_within_hours} u`}
+                            </div>
+                          )}
+                          {r.status === 'open' && r.hours_after_end != null && (
+                            <div className={`text-xs mt-0.5 ${
+                              r.hours_after_end > r.expected_within_hours ? 'text-amber-700' : 'text-slate-500'
+                            }`}>
+                              open sinds {hoursText(r.hours_after_end)}
+                            </div>
+                          )}
                           {r.reviewed_at && r.reviewer_name && (
                             <div className="text-xs text-slate-500 mt-0.5">door {r.reviewer_name}</div>
                           )}
@@ -295,6 +315,15 @@ export default function Declarations({ onClose }: Props) {
             </div>
           )}
 
+          {/* Alleen tonen als er een rij is: de termijn komt uit die rijen mee en
+              staat nergens in deze code, dus zonder rijen is er ook geen getal. */}
+          {shown.length > 0 && (
+            <p className="text-xs text-slate-400">
+              De verwachting is dat een koerier binnen {shown[0].expected_within_hours} uur na zijn
+              dienst doorgeeft; buiten die termijn staat amber. Het is geen grens — de invullink blijft
+              werken, en te laat ingevuld is nog altijd ingevuld.
+            </p>
+          )}
           <p className="text-xs text-slate-400">
             Bij eigen auto geeft de koerier zelf de kilometers op; dat is niet controleerbaar en zo bedoeld.
             Het berekende getal ernaast is een referentie om afwijkingen te zien, geen afkeuringsgrond.

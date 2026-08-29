@@ -189,7 +189,10 @@ function variantLines(shifts: PayloadShift[]): string[] {
 
 // Eén blok per feit uit de outbox. Zonder aanhef en zonder afsluiting: die zet
 // de bundelaar er één keer om heen.
-function renderBlock(row: OutboxRow): string[] {
+// p_expected_hours komt uit declaration_settings (migratie 021) en niet uit een
+// getal hier: de termijn is een instelling, en twee plekken die 48 zeggen lopen
+// vroeg of laat uiteen. Is hij onbekend, dan blijft de zin gewoon weg.
+function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
   const p = row.payload;
   const shifts = p.shifts ?? [];
 
@@ -248,6 +251,14 @@ function renderBlock(row: OutboxRow): string[] {
         lines.push('Reed je op eigen kosten? Geef dan ook de totaal gereden kilometers op,'
                  + ' vanaf vertrek thuis tot terugkomst thuis.');
       }
+      if (expectedHours) {
+        // Nadrukkelijk een verwachting en geen deadline, en de tweede zin is
+        // geen beleefdheid: een koerier die denkt dat hij te laat is vult
+        // helemaal niets meer in, en dan zijn we de opgave kwijt in plaats van
+        // dat hij laat is.
+        lines.push(`Fijn als je dit binnen ${expectedHours} uur na je dienst doorgeeft.`
+                 + ' Later invullen kan ook, de link blijft gewoon werken.');
+      }
       return lines;
     }
     default:
@@ -293,11 +304,11 @@ function subjectFor(rows: OutboxRow[]): string {
 // is deze mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
 // en het is de enige manier om ook het rommelige geval te dekken waarin twee
 // tijden door elkaar heen lopen.
-function renderMail(rows: OutboxRow[], courierName: string): { subject: string; text: string } | null {
+function renderMail(rows: OutboxRow[], courierName: string, expectedHours: number | null): { subject: string; text: string } | null {
   const blocks = rows
     .slice()
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-    .map(renderBlock)
+    .map((r) => renderBlock(r, expectedHours))
     .filter((b) => b.length > 0);
 
   if (blocks.length === 0) return null;
@@ -386,6 +397,13 @@ Deno.serve(async (req) => {
   } else if ((expired ?? 0) > 0) {
     console.warn(`[mail] ${expired} nabericht(en) vervallen: de dienst is te lang geleden.`);
   }
+
+  // De termijn voor het nabericht, één keer per run. Mislukt dat, dan gaat de
+  // mail gewoon uit zonder die zin — een ontbrekende toelichting is geen reden
+  // om post te laten liggen.
+  const { data: expectedRaw, error: expHourErr } = await admin.rpc('declaration_expected_hours');
+  const expectedHours: number | null = expHourErr ? null : (Number(expectedRaw) || null);
+  if (expHourErr) console.error('[mail] termijn ophalen mislukt:', expHourErr.message);
 
   const { data: pending, error: pendErr } = await admin.rpc('mail_pending_couriers');
   if (pendErr) {
@@ -503,7 +521,7 @@ Deno.serve(async (req) => {
 
     // 4. Tekst opbouwen.
     const courierName = rows[0].payload?.courier_name ?? c.courier_name;
-    const mail = renderMail(rows, courierName);
+    const mail = renderMail(rows, courierName, expectedHours);
 
     if (!mail) {
       // Geen enkel feit leverde inhoud op. Dat wordt nooit beter, dus niet

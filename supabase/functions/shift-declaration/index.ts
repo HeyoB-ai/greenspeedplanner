@@ -82,7 +82,13 @@ Deno.serve(async (req) => {
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) return json({ error: 'link_ongeldig' }, 404);
 
-    return json({ declaration: row }, 200);
+    // De termijn waarbinnen we de opgave graag hebben (migratie 021). Komt uit
+    // de instelling en niet uit een getal in de pagina, zodat de tekst in de
+    // mail en op het scherm dezelfde bron heeft. Lukt het ophalen niet, dan
+    // blijft de zin weg en werkt de pagina verder gewoon.
+    const { data: hours } = await admin.rpc('declaration_expected_hours');
+
+    return json({ declaration: row, expected_within_hours: Number(hours) || null }, 200);
   }
 
   // ── Indienen ───────────────────────────────────────────────────────────

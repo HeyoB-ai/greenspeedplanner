@@ -160,6 +160,14 @@ export interface DeclarationRow {
   threshold_km: number | null;
   amount_eur: number | null;
   submitted_at: string | null;
+  // Tijdigheid, afgeleid (migratie 021) — geen kolom en geen status.
+  // hours_after_end:   ingediend → uren tussen de eindtijd en het indienen;
+  //                    nog niet  → uren dat de rij al openstaat.
+  // submitted_in_time: NULL zolang er niets is ingediend. Niet ingediend is
+  //                    niet te laat; het is niet ingediend.
+  hours_after_end: number | null;
+  submitted_in_time: boolean | null;
+  expected_within_hours: number;
   reviewed_at: string | null;
   reviewer_name: string | null;
   review_note: string | null;

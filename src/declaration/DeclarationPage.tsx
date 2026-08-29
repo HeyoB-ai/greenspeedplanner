@@ -14,6 +14,7 @@ interface Props {
 // weggelaten: wie hier komt staat waarschijnlijk op straat met zijn telefoon.
 export default function DeclarationPage({ token }: Props) {
   const [view, setView] = useState<DeclarationView | null>(null);
+  const [expectedHours, setExpectedHours] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState('');
@@ -29,8 +30,9 @@ export default function DeclarationPage({ token }: Props) {
   useEffect(() => {
     if (!token) { setInvalid(true); setLoading(false); return; }
     loadDeclaration(token)
-      .then((d) => {
+      .then(({ declaration: d, expectedWithinHours }) => {
         setView(d);
+        setExpectedHours(expectedWithinHours);
         // Al ingevuld? Dan staat het er weer in, zodat corrigeren kan zolang de
         // planner er niet naar gekeken heeft.
         setStart(d.actual_start ?? '');
@@ -115,6 +117,16 @@ export default function DeclarationPage({ token }: Props) {
       <p className="text-sm text-slate-600 mt-1">
         Je dienst zit erop. Twee vragen, dan is het klaar.
       </p>
+      {/* Nadrukkelijk een verwachting en geen deadline. De tweede zin hoort
+          erbij: wie denkt dat hij te laat is, vult helemaal niets meer in — en
+          dan zijn we de opgave kwijt in plaats van dat hij laat is. Het getal
+          komt uit de instelling, niet uit deze pagina. */}
+      {expectedHours && (
+        <p className="text-xs text-slate-500 mt-1">
+          Fijn als je dit binnen {expectedHours} uur na je dienst doorgeeft. Later invullen kan ook,
+          deze link blijft gewoon werken.
+        </p>
+      )}
 
       {/* Ter herkenning: welke dienst dit is. Alleen deze dienst, en niets over
           andere mensen. */}

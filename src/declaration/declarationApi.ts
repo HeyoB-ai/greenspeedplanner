@@ -66,12 +66,23 @@ async function parse(res: Response): Promise<any> {
   throw new Error(body?.error ?? 'Er ging iets mis. Probeer het later opnieuw.');
 }
 
-export async function loadDeclaration(token: string): Promise<DeclarationView> {
+export interface LoadedDeclaration {
+  declaration: DeclarationView;
+  // Binnen hoeveel uur na de dienst we de opgave graag hebben (migratie 021).
+  // Een verwachting, geen grens: de link blijft werken tot hij verloopt. Komt
+  // uit declaration_settings, dus dit getal staat nergens in de pagina.
+  expectedWithinHours: number | null;
+}
+
+export async function loadDeclaration(token: string): Promise<LoadedDeclaration> {
   if (!declarationConfigured) throw new Error('De pagina is niet goed ingesteld.');
   const res = await fetch(`${endpoint()}?t=${encodeURIComponent(token)}`, { headers: headers() });
   const body = await parse(res);
   if (!body?.declaration) throw new LinkInvalidError();
-  return body.declaration as DeclarationView;
+  return {
+    declaration: body.declaration as DeclarationView,
+    expectedWithinHours: body.expected_within_hours ?? null,
+  };
 }
 
 export async function submitDeclaration(

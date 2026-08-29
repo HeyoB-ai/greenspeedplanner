@@ -146,6 +146,32 @@ vorige link ongeldig maakt. Dat is hier goedkoop: een nabericht gaat één keer 
 dienst uit, en een tweede uitgifte gebeurt alleen als de eerste verzending
 mislukte.
 
+### Binnen 48 uur is een verwachting, geen grens
+
+De planner wil zien of er vlot is ingediend. Dat is een **verwachting**:
+`declaration_settings.expected_within_hours` (standaard 48) staat los van
+`token_valid_days` (30 dagen). De link blijft dus gewoon werken, ook als het te
+laat is — anders vult iemand die denkt dat hij te laat is helemaal niets meer in,
+en dan zijn we de opgave kwijt in plaats van dat hij laat is. Zo staat het ook in
+de mail en op de pagina: *"Later invullen kan ook, de link blijft gewoon
+werken."*
+
+Er is bewust **geen kolom en geen status** voor bijgekomen (migratie 021). Of
+iets op tijd was is af te leiden uit `submitted_at` en de eindtijd van de dienst,
+en afgeleide feiten horen niet opgeslagen te worden: een opgeslagen oordeel
+raakt los van de gegevens zodra de termijn verandert. `declaration_overview()`
+rekent het per rij uit:
+
+| Kolom | Ingediend | Nog niet ingediend |
+|---|---|---|
+| `hours_after_end` | uren tussen de eindtijd en het indienen | uren dat de rij al openstaat |
+| `submitted_in_time` | viel dat binnen de termijn | `NULL` — niet ingediend is niet te laat |
+| `expected_within_hours` | de termijn zelf, zodat het scherm hem niet kent | idem |
+
+De eindtijd komt uit `declaration_shift_end()`, dezelfde definitie waarmee de
+sweep bepaalt dát een dienst af is. Anders zou "48 uur na afloop" hier iets
+anders betekenen dan daar.
+
 ### Corrigeren mag, tot de planner kijkt
 
 Na indienen blijft de link werken zolang de status `submitted` is. Zodra de
@@ -246,12 +272,12 @@ andere keten.
 | `reimbursement_rates` | 018 | tarief + drempel, met ingangsdatum |
 | `shift_declarations` | 018 | één rij per dienst: opgave én berekening |
 | `declaration_compute()` | 018, 020 | de rekenregel, op één plek |
-| `declaration_settings` | 019 | vloer, maximale leeftijd, geldigheid link |
+| `declaration_settings` | 019, 021 | vloer, maximale leeftijd, geldigheid link, verwachte termijn |
 | `declaration_sweep()` | 019 | afgelopen diensten → declaratie + bericht |
 | `declaration_expire_stale()` | 019 | te oude post afsluiten |
 | `declaration_issue_token()` | 019 | token bij het verzenden |
 | `declaration_by_token()` / `declaration_submit()` | 019 | de invulpagina |
-| `declaration_overview()` / `declaration_review()` | 019 | de plannerkant |
+| `declaration_overview()` / `declaration_review()` | 019, 021 | de plannerkant |
 
 Twee afwijkingen van de oorspronkelijke opdrachtomschrijving, allebei omdat het
 schema anders is dan daar aangenomen:
@@ -276,10 +302,13 @@ De volgorde is niet vrijblijvend: stap 7 stuurt mail.
 3. **Standplaatsen en afstanden vullen** via *Afstanden* in de planner.
    ⚠ Zolang apotheken geen adresgegevens hebben, kan er voor die apotheken geen
    afstand berekend worden. Het scherm benoemt ze en biedt handmatige invoer.
-4. **Migratie 019 en 020** draaien, daarna
-   `supabase/tests/019_declaration_mail_test.sql` en
-   `supabase/tests/020_declaration_branch_test.sql`. 020 telt bestaande, nog niet
-   goedgekeurde declaraties opnieuw door onder de aangescherpte regel.
+4. **Migratie 019, 020 en 021** draaien, daarna
+   `supabase/tests/019_declaration_mail_test.sql`,
+   `supabase/tests/020_declaration_branch_test.sql` en
+   `supabase/tests/021_declaration_timeliness_test.sql`. 020 telt bestaande, nog
+   niet goedgekeurde declaraties opnieuw door onder de aangescherpte regel; 021
+   zet `declaration_overview()` opnieuw neer, dus de app moet daarna de nieuwe
+   kolommen kennen (die build staat er al).
    Controleer meteen de verificatiequery *sweep_zou_oppakken*: dat is het aantal
    mails dat er uitgaat zodra de cron aan gaat. Loopt dat in de tientallen, zet
    `active_from` dan hoger.

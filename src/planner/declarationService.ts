@@ -83,6 +83,14 @@ export function euroText(amount: number | null): string {
   return `€ ${Number(amount).toFixed(2).replace('.', ',')}`;
 }
 
+// Uren als '5,5 u' of '70 u'. Onder de tien uur zegt het halve uur nog iets,
+// daarboven leest een heel getal rustiger en is de precisie schijn.
+export function hoursText(hours: number | null): string {
+  if (hours == null) return '—';
+  const h = Number(hours);
+  return h < 10 ? `${h.toFixed(1).replace('.', ',')} u` : `${Math.round(h)} u`;
+}
+
 export function kmText(km: number | null): string {
   if (km == null) return '—';
   return `${Number(km).toFixed(1).replace('.', ',')} km`;

@@ -43,6 +43,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `018_shift_declarations.sql` | nadeclaratie: standplaats, `courier_distances`, `reimbursement_rates`, `shift_declarations` + de rekenregel `declaration_compute()` |
 | `019_declaration_mail.sql` | nadeclaratie: `declaration_sweep()`, de berichtsoort `shift_followup`, de token-functies en de plannerkant |
 | `020_declaration_branch.sql` | de standplaatstak geldt alleen als álle apotheken van de dienst de standplaats zijn; een ontbrekende afstand levert onbekend op in plaats van een te laag bedrag |
+| `021_declaration_timeliness.sql` | `expected_within_hours` (standaard 48) en de afgeleide tijdigheid in `declaration_overview()`; de invullink blijft onveranderd 30 dagen geldig |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -62,6 +63,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `018_shift_declarations_test.sql` | de vier takken van de reiskostenregel plus de randen: drempel vervalt bij eigen auto en bij een andere apotheek, nul is niet onbekend, tarief per dienstdatum, km's geweigerd bij een fietsdienst |
 | `019_declaration_mail_test.sql` | sweep (idempotent, venster, vloer, te oude diensten), token uitgeven en gebruiken, indienen, leeftijdscontrole, en dat de link stopt na beoordeling |
 | `020_declaration_branch_test.sql` | de tak-keuze bij meerdere apotheken: één andere apotheek is genoeg voor `other_pharmacy` met de volle afstand, een ontbrekende afstand geeft onbekend mét naam, en bij eigen auto raakt dat alleen de referentie |
+| `021_declaration_timeliness_test.sql` | binnen/buiten de termijn ingediend, een openstaande rij zonder oordeel, de termijn is instelbaar (72 uur maakt dezelfde rij op tijd), en de link werkt na te laat indienen gewoon door |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
@@ -320,6 +322,22 @@ Het invoerveld in *Afstanden* wordt na een geslaagde berekening leeggemaakt.
 > `scripts/backfill-pharmacy-coords.mjs`, en dat vergt eerst adresgegevens op de
 > apotheek zelf.
 
+### Binnen hoeveel uur
+
+`declaration_settings.expected_within_hours` (standaard 48) is een **verwachting**
+en staat los van `token_valid_days` (30 dagen): de invullink blijft werken, ook
+te laat. Dat staat zo in de mail en op de pagina, en met opzet — wie denkt dat
+hij te laat is, vult helemaal niets meer in.
+
+Het plannerscherm toont per rij hoe lang na afloop er is ingediend, of dat binnen
+de termijn viel, en bij een openstaande rij hoe lang die al openstaat. Er is
+daarvoor geen kolom en geen status bijgekomen: het is af te leiden uit
+`submitted_at` en de eindtijd. Termijn wijzigen:
+
+```sql
+UPDATE public.declaration_settings SET expected_within_hours = 72;
+```
+
 ### De invulpagina
 
 `/declaratie?t=<token>` in dezelfde bundel, gekozen in `src/main.tsx` vóór de
@@ -359,9 +377,9 @@ Volgorde, en stap 7 stuurt mail:
    `effective_from`, nooit met een `UPDATE`: die rij zit vast in al uitbetaalde
    declaraties.
 3. Standplaatsen en afstanden vullen via *Afstanden*.
-4. Migratie 019 en 020 draaien, daarna `supabase/tests/019_declaration_mail_test.sql`
-   en `supabase/tests/020_declaration_branch_test.sql`. 020 telt bestaande, nog
-   niet goedgekeurde declaraties opnieuw door onder de aangescherpte regel.
+4. Migratie 019, 020 en 021 draaien, daarna de bijbehorende tests. 020 telt
+   bestaande, nog niet goedgekeurde declaraties opnieuw door onder de
+   aangescherpte regel; 021 zet `declaration_overview()` opnieuw neer.
    Kijk naar de verificatiequery `sweep_zou_oppakken`: dat is het aantal mails
    dat er uitgaat zodra de cron aan gaat. Te veel? Zet `active_from` hoger.
 5. Edge Functions uitrollen (zie hierboven).
