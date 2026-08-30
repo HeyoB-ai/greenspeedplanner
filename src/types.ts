@@ -23,6 +23,10 @@ export interface SessionUser {
 export interface Pharmacy {
   id: string;   // TEXT, bv. 'ph-1779784742417'
   name: string;
+  // Plaatsnaam uit pharmacies.city. Bestond al in het schema van de bezorg-app
+  // maar was nergens te vullen; sinds migratie 024 kan dat in het apotheekbeheer.
+  // null = onbekend → groepeert in het weekoverzicht onder "Overig".
+  city: string | null;
 }
 
 export interface Institution {

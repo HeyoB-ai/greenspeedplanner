@@ -46,6 +46,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `021_declaration_timeliness.sql` | `expected_within_hours` (standaard 48) en de afgeleide tijdigheid in `declaration_overview()`; de invullink blijft onveranderd 30 dagen geldig |
 | `022_declaration_submit_reasons.sql` | `declaration_submit()` zegt wélke reden er is (verlopen / in behandeling / goedgekeurd); een onbekend token houdt de nietszeggende melding |
 | `023_declaration_by_token_review.sql` | `declaration_by_token()` geeft ook `approved` en `disputed` terug, met `review_note`; de invulpagina toont die als leesweergave |
+| `024_pharmacy_city.sql` | `pharmacies.city` leesbaar en bewerkbaar maken via `set_pharmacy_city()` — de kolom zelf bestond al in het schema van de bezorg-app |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -68,6 +69,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `021_declaration_timeliness_test.sql` | binnen/buiten de termijn ingediend, een openstaande rij zonder oordeel, de termijn is instelbaar (72 uur maakt dezelfde rij op tijd), en de link werkt na te laat indienen gewoon door |
 | `022_declaration_submit_reasons_test.sql` | de vier uitkomsten van indienen (28000 / 45001 / 45002 / 45003), dat een onbekend token exact dezelfde tekst houdt, en dat gewoon indienen nog werkt |
 | `023_declaration_by_token_review_test.sql` | beoordeelde declaraties komen terug mét status en reden, een verlopen of onbekend token nog steeds niet, en opslaan blijft geweigerd |
+| `024_pharmacy_city_test.sql` | plaats zetten (getrimd), leeg opslaan wist het veld, onbekende apotheek geeft een fout, en een koerier mag het niet |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
@@ -284,6 +286,37 @@ hooguit onvolledig. Zie punt 10 van het ontwerp.
 | `shift_cancelled` | Je dienst van … vervalt / gaat naar een andere koerier | `Deze dienst vervalt: … Je hoeft niet te komen.` |
 | `schedule_cancelled` | Je vaste dienst vervalt | nog niet in gebruik; staat er zodat een onbekend feit geen lege mail oplevert |
 | `shift_followup` | Hoe lang duurde je dienst van \<dag\> \<datum\>? | de invullink van de nadeclaratie (fase 6); bij een eigen auto ook de vraag om de totaal gereden kilometers |
+
+## Het weekoverzicht
+
+Twee weergaven, te wisselen met de schakelaar linksboven:
+
+* **Apotheken** (standaard) — apotheken op de y-as, dagen op de x-as. Hier plan je:
+  een lege cel is een knop om een dienst toe te voegen. Dit is de weergave die
+  gebruikers uit L1nda kennen, dus die blijft de standaard.
+* **Koeriers** — koeriers op de y-as, met per cel de diensten van die dag
+  (begintijd, apotheek, vervoermiddel). **Alleen lezen**: er zit geen klikbare cel
+  in. Bovenaan staat een rij `Open (niet toegewezen)`, want anders zou juist de
+  dienst die aandacht nodig heeft hier onzichtbaar zijn. Alleen koeriers met
+  minstens één dienst in de week krijgen een rij.
+
+Beide weergaven volgen dezelfde filters. Het apotheekfilter filtert in de
+apotheekweergave rijen weg en in de koeriersweergave diensten.
+
+### Groeperen op plaats
+
+Met **Groepeer op plaats** komen de apotheken onder inklapbare plaatskoppen te
+staan, alfabetisch, met apotheken zonder plaats onderaan in **Overig**. De
+schakelaar staat standaard uit: bij een handvol apotheken is groeperen meer
+omhaal dan overzicht.
+
+De plaats komt uit `pharmacies.city`. Die kolom bestond al in het schema van de
+bezorg-app maar was nergens te vullen; sinds migratie 024 doe je dat in
+**Apotheken** in de kop van de app. Hij wordt **niet** uit het adres afgeleid: de
+schrijfwijzen lopen uiteen, en dan staan "Hilversum" en "1213 BE Hilversum" als
+twee plaatsen in het overzicht. Een foute groepering is erger dan geen
+groepering, want die eerste ziet niemand. Het invoerveld biedt de al gebruikte
+plaatsen als suggestie aan, zodat er niet per ongeluk twee schrijfwijzen ontstaan.
 
 ## Nadeclaratie (fase 6) — nog niet aangezet
 

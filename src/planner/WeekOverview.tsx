@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  ChevronRight as ChevronCollapsed, Plus, Users,
+} from 'lucide-react';
 import { Courier, Pharmacy, Shift, SmsLogEntry } from '../types';
 import { confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
 import { getSmsStatusForShifts } from './smsService';
@@ -10,6 +13,11 @@ import { SHIFT_TYPES, TYPE_STYLES, WEEKDAY_LABELS } from './constants';
 import { detectConflicts } from './conflicts';
 import ShiftChip from './ShiftChip';
 import DayView from './DayView';
+import CourierWeek from './CourierWeek';
+
+// De groep voor apotheken zonder plaats. Als sleutel én als label, zodat er geen
+// tweede plek is waar "Overig" gespeld wordt.
+const NO_CITY = 'Overig';
 
 type CourierFilter = 'all' | 'open' | string;
 
@@ -47,6 +55,13 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [onlyDrafts, setOnlyDrafts] = useState(false);
   const [draftKind, setDraftKind] = useState<'all' | 'manual' | 'schedule'>('all');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  // Apotheken op de y-as (zoals L1nda) of koeriers. Apotheken blijft de
+  // standaard: daar zijn gebruikers aan gewend, en alleen daar kun je plannen.
+  const [view, setView] = useState<'pharmacy' | 'courier'>('pharmacy');
+  // Groeperen op plaats. Uit by default — bij een handvol apotheken zijn groepen
+  // meer omhaal dan overzicht.
+  const [groupByCity, setGroupByCity] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
 
@@ -54,7 +69,10 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const weekStartISO = toISODate(weekStart);
   const weekEndISO = toISODate(addDays(weekStart, 6));
 
-  // Referentiedata één keer laden.
+  // Referentiedata laden. Ook bij refreshSignal, want de plaatsnaam van een
+  // apotheek is hier referentiedata én bepaalt de groepen: zonder deze
+  // afhankelijkheid zie je een zojuist ingevulde plaats pas na een herlaadbeurt
+  // van de hele pagina.
   useEffect(() => {
     (async () => {
       try {
@@ -67,7 +85,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
         setError(e?.message ?? 'Laden van referentiedata mislukt.');
       }
     })();
-  }, []);
+  }, [refreshSignal]);
 
   // Diensten van de week (her)laden.
   useEffect(() => {
@@ -166,6 +184,88 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     return list;
   }, [pharmacies, pharmacyFilter, onlyWithShifts, grid]);
 
+  // Apotheken gegroepeerd op plaats, alfabetisch, met "Overig" onderaan — dat is
+  // een restgroep en geen plaats, dus die hoort niet tussen de O's.
+  // getPharmacies() sorteert al op naam, dus binnen een groep klopt de volgorde.
+  const groups = useMemo(() => {
+    const byCity = new Map<string, typeof visiblePharmacies>();
+    for (const p of visiblePharmacies) {
+      const key = p.city?.trim() || NO_CITY;
+      if (!byCity.has(key)) byCity.set(key, []);
+      byCity.get(key)!.push(p);
+    }
+    return [...byCity.entries()]
+      .sort(([a], [b]) => {
+        if (a === NO_CITY) return 1;
+        if (b === NO_CITY) return -1;
+        return a.localeCompare(b, 'nl');
+      })
+      .map(([city, list]) => ({ city, list }));
+  }, [visiblePharmacies]);
+
+  // Diensten voor de koeriersweergave: dezelfde filters als het raster, plus het
+  // apotheekfilter — dat filtert daar rijen weg en hier diensten.
+  const courierViewShifts = useMemo(
+    () => shifts.filter((s) => passesFilters(s)
+      && (!pharmacyFilter || s.pharmacyIds.includes(pharmacyFilter))),
+    [shifts, courierFilter, onlyDrafts, draftKind, pharmacyFilter],
+  );
+
+  function toggleGroup(city: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(city)) next.delete(city); else next.add(city);
+      return next;
+    });
+  }
+
+  // Eén apotheekrij. Losse functie omdat de platte lijst en de groepen hem
+  // allebei tekenen en ze niet uit elkaar mogen lopen.
+  function pharmacyRow(p: Pharmacy) {
+    return (
+      <tr key={p.id} className="align-top">
+        <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-slate-200 font-medium">
+          <button
+            onClick={() => onOpenSchedule({ id: p.id, name: p.name })}
+            className="text-left hover:text-green-700 hover:underline"
+            title="Rooster beheren"
+          >
+            {p.name}
+          </button>
+        </td>
+        {days.map((d, i) => {
+          const dayISO = toISODate(d);
+          const cellShifts = grid.get(p.id)?.get(dayISO) ?? [];
+          return (
+            <td key={i} className="px-1.5 py-1.5 border-b border-l border-slate-200">
+              {cellShifts.length === 0 ? (
+                <button
+                  onClick={() => onCreate(p.id, dayISO)}
+                  className="w-full h-9 rounded-md border border-dashed border-slate-200 text-slate-300 hover:border-green-400 hover:text-green-500 flex items-center justify-center"
+                  title="Dienst toevoegen"
+                >
+                  <Plus size={14} />
+                </button>
+              ) : (
+                <div className="space-y-1">
+                  {cellShifts.map((s) => (
+                    <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
+                  ))}
+                  <button
+                    onClick={() => onCreate(p.id, dayISO)}
+                    className="w-full text-[11px] text-slate-400 hover:text-green-600 flex items-center justify-center gap-0.5 py-0.5"
+                  >
+                    <Plus size={11} /> dienst
+                  </button>
+                </div>
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  }
+
   if (selectedDay) {
     const dayISO = toISODate(selectedDay);
     const dayShifts = shifts.filter((s) => s.shiftDate === dayISO && passesFilters(s));
@@ -213,6 +313,27 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
         >
           Deze week
         </button>
+
+        {/* Wisselen van y-as. Apotheken is de standaard en staat daarom links. */}
+        <div className="ml-3 inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+          {([
+            { key: 'pharmacy', label: 'Apotheken', Icon: Building2 },
+            { key: 'courier',  label: 'Koeriers',  Icon: Users },
+          ] as const).map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              onClick={() => setView(key)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 ${
+                view === key ? 'bg-green-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+              title={key === 'courier'
+                ? 'Koeriers op de y-as — alleen lezen, plannen gaat via het apotheekoverzicht'
+                : 'Apotheken op de y-as'}
+            >
+              <Icon size={15} /> {label}
+            </button>
+          ))}
+        </div>
 
         {/* Conflict-teller + concept-teller + bulk bevestigen (zichtbare week) */}
         <div className="ml-auto flex items-center gap-3">
@@ -265,6 +386,12 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           <input type="checkbox" checked={onlyWithShifts} onChange={(e) => setOnlyWithShifts(e.target.checked)} />
           <span>Alleen apotheken met diensten deze week</span>
         </label>
+        {view === 'pharmacy' && (
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={groupByCity} onChange={(e) => setGroupByCity(e.target.checked)} />
+            <span>Groepeer op plaats</span>
+          </label>
+        )}
         <label className="flex items-center gap-1.5 cursor-pointer">
           <input type="checkbox" checked={onlyDrafts} onChange={(e) => setOnlyDrafts(e.target.checked)} />
           <span>Alleen concepten</span>
@@ -304,6 +431,15 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           laat dat ook in de DOM staat. Elke modal in deze app moet er dus een
           hebben — ze staan allemaal op z-50. Zonder dat keek je door de overlay
           heen tegen deze kolom aan. */}
+      {view === 'courier' ? (
+        <CourierWeek
+          days={days}
+          couriers={couriers}
+          shifts={courierViewShifts}
+          pharmacyNames={pharmacyName}
+          loading={loading}
+        />
+      ) : (
       <div className="overflow-x-auto border border-slate-200 rounded-lg">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -326,51 +462,37 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
             </tr>
           </thead>
           <tbody>
-            {visiblePharmacies.map((p) => (
-              <tr key={p.id} className="align-top">
-                <td className="sticky left-0 z-10 bg-white px-3 py-2 border-b border-slate-200 font-medium">
-                  <button
-                    onClick={() => onOpenSchedule({ id: p.id, name: p.name })}
-                    className="text-left hover:text-green-700 hover:underline"
-                    title="Rooster beheren"
-                  >
-                    {p.name}
-                  </button>
-                </td>
-                {days.map((d, i) => {
-                  const dayISO = toISODate(d);
-                  const cellShifts = grid.get(p.id)?.get(dayISO) ?? [];
-                  return (
-                    <td key={i} className="px-1.5 py-1.5 border-b border-l border-slate-200">
-                      {cellShifts.length === 0 ? (
-                        <button
-                          onClick={() => onCreate(p.id, dayISO)}
-                          className="w-full h-9 rounded-md border border-dashed border-slate-200 text-slate-300 hover:border-green-400 hover:text-green-500 flex items-center justify-center"
-                          title="Dienst toevoegen"
-                        >
-                          <Plus size={14} />
-                        </button>
-                      ) : (
-                        <div className="space-y-1">
-                          {cellShifts.map((s) => (
-                            <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
-                          ))}
-                          <button
-                            onClick={() => onCreate(p.id, dayISO)}
-                            className="w-full text-[11px] text-slate-400 hover:text-green-600 flex items-center justify-center gap-0.5 py-0.5"
-                          >
-                            <Plus size={11} /> dienst
-                          </button>
-                        </div>
-                      )}
+            {!groupByCity && visiblePharmacies.map((p) => pharmacyRow(p))}
+
+            {/* Gegroepeerd op plaats. De kopregel beslaat de hele breedte en
+                blijft links staan bij horizontaal schuiven, anders schuift het
+                plaatsnaampje uit beeld precies wanneer je het nodig hebt. */}
+            {groupByCity && groups.map(({ city, list }) => {
+              const isCollapsed = collapsed.has(city);
+              return (
+                <Fragment key={city}>
+                  <tr>
+                    <td colSpan={days.length + 1} className="sticky left-0 z-10 bg-slate-100 border-b border-slate-200 p-0">
+                      <button
+                        onClick={() => toggleGroup(city)}
+                        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-sm font-semibold text-slate-700 hover:text-green-700"
+                        title={isCollapsed ? 'Groep uitklappen' : 'Groep inklappen'}
+                      >
+                        {isCollapsed ? <ChevronCollapsed size={15} /> : <ChevronDown size={15} />}
+                        {city}
+                        <span className="font-normal text-slate-500">
+                          ({list.length} apothe{list.length === 1 ? 'ek' : 'ken'})
+                        </span>
+                      </button>
                     </td>
-                  );
-                })}
-              </tr>
-            ))}
+                  </tr>
+                  {!isCollapsed && list.map((p) => pharmacyRow(p))}
+                </Fragment>
+              );
+            })}
             {visiblePharmacies.length === 0 && !loading && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-slate-400">
+                <td colSpan={days.length + 1} className="px-3 py-6 text-center text-slate-400">
                   Geen apotheken om te tonen.
                 </td>
               </tr>
@@ -378,6 +500,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Bulk-bevestiging van alle concepten in de zichtbare week */}
       {showBulkConfirm && (

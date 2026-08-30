@@ -15,10 +15,26 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
   const sb = requireClient();
   const { data, error } = await sb
     .from('pharmacies')
-    .select('id, name')
+    .select('id, name, city')
     .order('name', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as Pharmacy[];
+  return (data ?? []).map((r: any): Pharmacy => ({
+    id: r.id,
+    name: r.name,
+    city: r.city ?? null,
+  }));
+}
+
+// Plaats van een apotheek zetten of wissen (migratie 024). Loopt via een
+// SECURITY DEFINER-functie: pharmacies is een gedeelde productietabel en krijgt
+// geen schrijfrechten voor de planner, want die zouden meteen voor élke kolom
+// gelden. Leeg opslaan wist het veld.
+export async function setPharmacyCity(pharmacyId: string, city: string | null): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.rpc('set_pharmacy_city', {
+    p_pharmacy_id: pharmacyId, p_city: city,
+  });
+  if (error) throw error;
 }
 
 // Alle koeriers, met hun apotheek-koppelingen uit courier_pharmacy_access (CPA)
