@@ -49,6 +49,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `024_pharmacy_city.sql` | `pharmacies.city` leesbaar en bewerkbaar maken via `set_pharmacy_city()` — de kolom zelf bestond al in het schema van de bezorg-app |
 | `025_pharmacy_invoicing.sql` | facturatie: `shift_pharmacies.budgeted_minutes`, `pharmacy_rates`, spoedbedrag op `shifts`, en `invoice_lines()` |
 | `026_invoice_lines_fixes.sql` | `invoice_lines()`: reden-opbouw (`::TEXT`, zie hieronder), en een regel zonder duur krijgt geen bedrag in plaats van nul |
+| `027_declaration_compute_cast.sql` | dezelfde `::TEXT` op de drie vaste zinnen in `declaration_compute()`; alleen een cast, geen gedragswijziging |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -73,6 +74,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `023_declaration_by_token_review_test.sql` | beoordeelde declaraties komen terug mét status en reden, een verlopen of onbekend token nog steeds niet, en opslaan blijft geweigerd |
 | `024_pharmacy_city_test.sql` | plaats zetten (getrimd), leeg opslaan wist het veld, onbekende apotheek geeft een fout, en een koerier mag het niet |
 | `026_invoice_lines_fixes_test.sql` | dat een vaste zin als reden terugkomt, dat een dienst zonder duur zichtbaar blijft zonder bedrag, en dat een regel zonder totaal geen losse bedragen houdt |
+| `027_declaration_compute_cast_test.sql` | de drie takken met een vaste zin (geen standplaats, onbekende afstand, dienst zonder apotheek) geven een reden terug, met ongewijzigde uitkomsten |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -370,13 +372,12 @@ klapt hij om op de uitvoering, niet bij het aanmaken van de functie. Regels met
 
 De oplossing is één cast: `v_reasons := v_reasons || 'reden'::TEXT`.
 
-> **Dezelfde constructie staat nog in `declaration_compute()`** (migratie 020,
-> regels 102, 145 en 161; en in 018). Die is bij fase 7 bewust niet aangeraakt,
-> maar loopt op dezelfde fout zodra een van die drie takken zich voordoet: een
-> koerier zonder standplaats, een onbekende afstand, of een dienst zonder
-> apotheek. Dat verklaart ook waarom het daar nog niet is opgevallen — die takken
-> hebben zich nog niet voorgedaan. Een migratie 027 die daar `::TEXT` bij zet is
-> één regel per geval en verandert verder niets.
+> Dezelfde constructie stond in `declaration_compute()` (migratie 020, regels
+> 102, 145 en 161). **Migratie 027 zet daar dezelfde cast**, en verder niets: de
+> body is die van 020 met op drie regels een `::TEXT` erbij. Het ging om de
+> takken die zich nog niet hadden voorgedaan — een koerier zonder standplaats,
+> een onbekende afstand, of een dienst zonder apotheek — en dat is meteen de
+> reden dat het daar niet eerder opviel.
 
 ### Markeringen
 
