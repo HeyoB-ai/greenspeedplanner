@@ -48,6 +48,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `023_declaration_by_token_review.sql` | `declaration_by_token()` geeft ook `approved` en `disputed` terug, met `review_note`; de invulpagina toont die als leesweergave |
 | `024_pharmacy_city.sql` | `pharmacies.city` leesbaar en bewerkbaar maken via `set_pharmacy_city()` — de kolom zelf bestond al in het schema van de bezorg-app |
 | `025_pharmacy_invoicing.sql` | facturatie: `shift_pharmacies.budgeted_minutes`, `pharmacy_rates`, spoedbedrag op `shifts`, en `invoice_lines()` |
+| `026_invoice_lines_fixes.sql` | `invoice_lines()`: reden-opbouw (`::TEXT`, zie hieronder), en een regel zonder duur krijgt geen bedrag in plaats van nul |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -71,6 +72,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `022_declaration_submit_reasons_test.sql` | de vier uitkomsten van indienen (28000 / 45001 / 45002 / 45003), dat een onbekend token exact dezelfde tekst houdt, en dat gewoon indienen nog werkt |
 | `023_declaration_by_token_review_test.sql` | beoordeelde declaraties komen terug mét status en reden, een verlopen of onbekend token nog steeds niet, en opslaan blijft geweigerd |
 | `024_pharmacy_city_test.sql` | plaats zetten (getrimd), leeg opslaan wist het veld, onbekende apotheek geeft een fout, en een koerier mag het niet |
+| `026_invoice_lines_fixes_test.sql` | dat een vaste zin als reden terugkomt, dat een dienst zonder duur zichtbaar blijft zonder bedrag, en dat een regel zonder totaal geen losse bedragen houdt |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -349,12 +351,45 @@ Spoed       alleen het telefonisch afgesproken bedrag; geen uren, geen starttari
    per aangevinkte apotheek. Alleen nodig bij gedeelde diensten; ontbreekt het,
    dan wordt gelijk verdeeld en de regel gemarkeerd.
 
+### ⚠ `text[] || 'tekst'` — een valkuil die nog ergens anders zit
+
+`invoice_lines()` liep stuk op **"malformed array literal"** bij het samenstellen
+van de reden. Niet door een verkeerde toewijzing: élke regel gebruikte al `||`.
+Het zit in de operatorkeuze. Voor `text[] || <letterlijke tekst>` heeft Postgres
+twee kandidaten —
+
+```
+anyarray || anyelement    -- array met een element erbij
+anyarray || anyarray      -- twee arrays aan elkaar
+```
+
+— en een letterlijke `'tekst'` heeft type `unknown`, dus die past op allebei.
+Kiest Postgres de tweede, dan leest hij de zin als array-literaal (`{…}`) en
+klapt hij om op de uitvoering, niet bij het aanmaken van de functie. Regels met
+`format(…)` hebben er geen last van: die geven een getypeerde `text` terug.
+
+De oplossing is één cast: `v_reasons := v_reasons || 'reden'::TEXT`.
+
+> **Dezelfde constructie staat nog in `declaration_compute()`** (migratie 020,
+> regels 102, 145 en 161; en in 018). Die is bij fase 7 bewust niet aangeraakt,
+> maar loopt op dezelfde fout zodra een van die drie takken zich voordoet: een
+> koerier zonder standplaats, een onbekende afstand, of een dienst zonder
+> apotheek. Dat verklaart ook waarom het daar nog niet is opgevallen — die takken
+> hebben zich nog niet voorgedaan. Een migratie 027 die daar `::TEXT` bij zet is
+> één regel per geval en verandert verder niets.
+
 ### Markeringen
 
 Amber betekent: er ontbrak iets, of er is iets opvallends. De regel wordt wél
 berekend met wat er is — een factuur wordt hier niet door opgehouden. Een regel
-zonder tarief heeft geen totaal en telt apart, zodat een subtotaal nooit
-stilzwijgend te laag is.
+zonder totaal (geen tarief, of geen duur) houdt **geen enkel** los bedrag en telt
+apart, zodat de kolommen altijd optellen tot het eindtotaal en een subtotaal nooit
+stilzwijgend te hoog of te laag is.
+
+Is er geen werkelijke duur én geen geplande eindtijd, dan valt er niets te
+factureren. Die regel verschijnt tóch in het overzicht — zonder bedrag en met de
+markering — want stilzwijgend wegvallen betekent dat de planner de dienst
+helemaal mist.
 
 De afwijkingsgrens (standaard 25%) is instelbaar:
 

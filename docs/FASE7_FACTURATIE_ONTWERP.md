@@ -1,8 +1,10 @@
 # Fase 7 — facturatie richting apotheken
 
-Status: **gebouwd, migratie nog niet gedraaid.** Migratie 025 zet het datamodel en
-de berekening neer, de schermen zitten in de app. Er wordt niets verstuurd en
-niets gegenereerd: dit is een model plus een overzicht.
+Status: **025 gedraaid, 026 nog niet.** Migratie 025 zet het datamodel en de
+berekening neer, de schermen zitten in de app. Migratie 026 repareert twee dingen
+die pas bij het draaien bleken: de opbouw van de reden (`malformed array literal`)
+en een dienst zonder duur. Er wordt niets verstuurd en niets gegenereerd: dit is
+een model plus een overzicht.
 
 Fase 6 is gebouwd rond **koerier en dienst**. Dit is dezelfde werkelijkheid vanaf
 de andere kant: **klant en opdracht**. De werkelijke duur komt uit de
@@ -79,6 +81,7 @@ wat er is, en krijgt `incomplete` plus een leesbare `reason`.
 | geen tarief op die datum | geen bedrag (`line_total` is NULL) | "geen tarief voor deze apotheek op …" |
 | werkelijk wijkt ver af van gepland | niets — de berekening blijft staan | "werkelijke duur wijkt N% af van gepland" |
 | spoed zonder bedrag | geen bedrag | "spoedbedrag nog niet ingevuld" |
+| geen duur én geen geplande eindtijd | geen bedrag; de regel blijft wél staan | "geen werkelijke duur en geen geplande eindtijd; niets te factureren" |
 
 De laatste twee verdienen toelichting.
 
@@ -92,9 +95,17 @@ verhouding, een afwijking van de planning — geen daarvan raakt het factuurbedr
 bij spoed. Een markering op een regel die gewoon klopt leert de planner om
 markeringen te negeren, en dan is de markering elders ook niets meer waard.
 
-**Een regel zonder tarief telt nergens in mee.** `line_total` is dan NULL, en het
-overzicht telt die regels apart op ("N regels hebben géén bedrag"), zodat een
-subtotaal nooit stilzwijgend te laag is.
+**Een regel zonder totaal houdt geen enkel bedrag** (migratie 026). `line_total`
+is dan NULL, en ook de losse bedragen zijn leeg — anders telt zo'n regel wel mee
+in een subtotaal maar niet in het eindtotaal, en dan tellen de kolommen in het
+overzicht niet op tot de onderste regel. Het overzicht telt die regels apart
+("N regels hebben géén bedrag").
+
+**Geen duur is niet nul minuten** (migratie 026). Zonder werkelijke duur én
+zonder geplande eindtijd valt er niets te factureren. De regel verschijnt tóch —
+wegvallen betekent dat de planner de dienst helemaal mist — maar zonder bedragen
+en met de markering. Zou hier 0 staan, dan levert de regel een keurig ogend
+totaal van alleen het starttarief op: te weinig, en niet als zodanig herkenbaar.
 
 ---
 
@@ -139,8 +150,11 @@ ze alleen op.
 
 ## 6. Uitrollen
 
-1. **Migratie 025** draaien (dry-run met `ROLLBACK;` mag eerst), daarna
-   `supabase/tests/025_pharmacy_invoicing_test.sql`.
+1. **Migratie 025 en 026** draaien (dry-run met `ROLLBACK;` mag eerst), daarna
+   `supabase/tests/025_pharmacy_invoicing_test.sql` en
+   `supabase/tests/026_invoice_lines_fixes_test.sql`. 026 vervangt alleen de body
+   van `invoice_lines()`; zonder die migratie loopt de functie stuk zodra een
+   regel een markering met een vaste zin krijgt.
 2. **Tarieven invoeren** per apotheek, in *Apotheken → Tarieven*. Zonder tarief
    blijft elke regel van die apotheek zonder bedrag staan. De verificatiequery
    onderaan de migratie geeft de lijst apotheken zonder tarief.

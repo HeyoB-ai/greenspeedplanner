@@ -158,7 +158,9 @@ export interface InvoiceLine {
   share_pct: number;
   shift_planned_minutes: number | null;
   shift_actual_minutes: number | null;
-  billed_minutes: number;
+  // Kan null zijn: zonder werkelijke duur én zonder geplande eindtijd is er
+  // niets te factureren, en dan is het bedrag onbekend — niet nul (migratie 026).
+  billed_minutes: number | null;
   from_declaration: boolean;
   hourly_rate: number | null;
   rate_id: string | null;
