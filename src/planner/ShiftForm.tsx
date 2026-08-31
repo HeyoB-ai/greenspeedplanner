@@ -36,6 +36,19 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
   const [startTime, setStartTime] = useState(shift?.startTime ?? '09:00');
   const [endTime, setEndTime] = useState(shift?.budgetedEndTime ?? '');
   const [selectedInstitutionIds, setSelectedInstitutionIds] = useState<string[]>(shift ? shift.institutionIds : []);
+  // Geplande minuten per apotheek, als ruwe tekst zodat een half getypt getal
+  // niet meteen op 0 springt. Bepaalt bij het factureren de verhouding waarmee
+  // de werkelijke duur over de apotheken verdeeld wordt (migratie 025).
+  const [minutes, setMinutes] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const [pid, m] of Object.entries(shift?.pharmacyMinutes ?? {})) {
+      if (m != null) out[pid] = String(m);
+    }
+    return out;
+  });
+  const [urgentAmount, setUrgentAmount] = useState(
+    shift?.urgentAmount != null ? String(shift.urgentAmount) : '');
+  const [urgentNote, setUrgentNote] = useState(shift?.urgentNote ?? '');
   const [description, setDescription] = useState(shift?.description ?? '');
   const [timingReliable, setTimingReliable] = useState(shift?.timingReliable ?? false);
 
@@ -117,8 +130,19 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
       carIsOwn: transportMode === 'car' ? carIsOwn : null,
       description: showDescription ? (description.trim() || null) : null,
       pharmacyIds: selectedPharmacyIds,
+      pharmacyMinutes: Object.fromEntries(selectedPharmacyIds.map((pid) => {
+        const raw = (minutes[pid] ?? '').trim();
+        const n = Number(raw);
+        // Leeg of onzin → null: "niet vastgelegd" is een geldige toestand die de
+        // factuurregel markeert. Een 0 zou een verhouding van nul betekenen.
+        return [pid, raw !== '' && Number.isFinite(n) && n > 0 ? Math.round(n) : null];
+      })),
       institutionIds: shiftType === 'institution' ? selectedInstitutionIds : [],
       timingReliable,
+      urgentAmount: shiftType === 'urgent' && urgentAmount.trim() !== ''
+        ? Number(urgentAmount.replace(',', '.'))
+        : null,
+      urgentNote: shiftType === 'urgent' ? (urgentNote.trim() || null) : null,
     };
   }
 
@@ -151,6 +175,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
           id: 'nieuw', courierId, courierName: null, shiftType, shiftDate,
           startTime, budgetedEndTime: endTime || null, status: shift?.status ?? 'draft',
           transportMode, carIsOwn, description: null, pharmacyIds: selectedPharmacyIds,
+          pharmacyMinutes: {}, urgentAmount: null, urgentNote: null,
           institutionIds: [], timingReliable, scheduleId: shift?.scheduleId ?? null,
         };
         const hard = others.filter((o) => pairLevel(probe, o) === 'hard');
@@ -180,20 +205,43 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
         <fieldset>
           <legend className="text-sm font-medium mb-1">Apotheken</legend>
           <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1">
-            {pharmacies.map((p) => (
-              <label key={p.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selectedPharmacyIds.includes(p.id)}
-                  onChange={() => togglePharmacy(p.id)}
-                />
-                {p.name}
-              </label>
-            ))}
+            {pharmacies.map((p) => {
+              const checked = selectedPharmacyIds.includes(p.id);
+              return (
+                <div key={p.id} className="flex items-center gap-2 text-sm">
+                  <label className="flex flex-1 items-center gap-2 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => togglePharmacy(p.id)}
+                    />
+                    <span className="truncate">{p.name}</span>
+                  </label>
+                  {/* Geplande minuten voor déze apotheek. Alleen zichtbaar als hij
+                      is aangevinkt: bij een niet-gekozen apotheek is er niets te
+                      plannen, en een rij lege velden leidt af. */}
+                  {checked && (
+                    <input
+                      type="number" min={1} step={5}
+                      value={minutes[p.id] ?? ''}
+                      placeholder="min"
+                      onChange={(e) => setMinutes((m) => ({ ...m, [p.id]: e.target.value }))}
+                      className="w-20 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums shrink-0"
+                      title="Geplande minuten voor deze apotheek — bepaalt de verdeling bij het factureren"
+                    />
+                  )}
+                </div>
+              );
+            })}
             {pharmacies.length === 0 && <p className="text-xs text-slate-400">Laden…</p>}
           </div>
           {selectedPharmacyIds.length > 1 && (
-            <p className="text-xs text-slate-500 mt-1">Gedeelde dienst voor {selectedPharmacyIds.length} apotheken.</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Gedeelde dienst voor {selectedPharmacyIds.length} apotheken.
+              {selectedPharmacyIds.some((id) => !(minutes[id] ?? '').trim())
+                ? ' Vul de minuten per apotheek in, anders wordt de tijd bij het factureren gelijk verdeeld.'
+                : ' De werkelijke duur wordt bij het factureren naar rato van deze minuten verdeeld.'}
+            </p>
           )}
         </fieldset>
 
@@ -316,6 +364,37 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
               )}
             </div>
           </fieldset>
+        )}
+
+        {/* Conditioneel: het afgesproken bedrag bij spoed. Dat komt niet uit een
+            tarieventabel maar uit een telefoongesprek, en het is bij spoed het
+            hele factuurbedrag — uren en starttarief tellen dan niet mee. */}
+        {shiftType === 'urgent' && (
+          <div className="rounded-lg border border-red-200 bg-red-50/60 p-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium">Afgesproken bedrag</label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-slate-500">€</span>
+                <input
+                  type="text" inputMode="decimal" value={urgentAmount}
+                  onChange={(e) => setUrgentAmount(e.target.value)}
+                  placeholder="0,00"
+                  className="w-28 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums bg-white"
+                />
+              </div>
+            </div>
+            <input
+              type="text" value={urgentNote}
+              onChange={(e) => setUrgentNote(e.target.value)}
+              placeholder="Toelichting — met wie afgesproken, en waarom dit bedrag"
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-sm bg-white"
+            />
+            <p className="text-xs text-slate-500">
+              Bij spoed factureren we alleen dit bedrag: geen uren, geen starttarief. De koerier
+              krijgt zijn uren gewoon via de declaratie.
+              {urgentAmount.trim() === '' && ' Zonder bedrag blijft de factuurregel gemarkeerd.'}
+            </p>
+          </div>
         )}
 
         {/* Conditioneel: omschrijving bij overig transport / spoed */}

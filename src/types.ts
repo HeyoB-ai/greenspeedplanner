@@ -59,11 +59,20 @@ export interface Shift {
   carIsOwn: boolean | null;
   description: string | null;
   pharmacyIds: string[];
+  // Geplande minuten per apotheek (shift_pharmacies.budgeted_minutes, migratie
+  // 025). Bepaalt de verhouding waarmee de werkelijke duur en de reiskosten over
+  // de apotheken verdeeld worden bij het factureren. Ontbreekt een waarde, dan
+  // verdeelt invoice_lines() gelijk en markeert de regel.
+  pharmacyMinutes: Record<string, number | null>;
   institutionIds: string[];
   // Planner-assertie dat de tijden bruikbaar zijn voor kalibratie (default false).
   timingReliable: boolean;
   // Herkomst: gevuld = uit een roosterregel gegenereerd; null = handmatig.
   scheduleId: string | null;
+  // Alleen bij shiftType 'urgent': het telefonisch afgesproken bedrag richting de
+  // apotheek, plus een toelichting. Bij spoed is dit het HELE factuurbedrag.
+  urgentAmount: number | null;
+  urgentNote: string | null;
 }
 
 // Eén roosterregel (vaste, terugkerende dienst) voor een apotheek.
@@ -116,8 +125,51 @@ export interface NewShiftInput {
   carIsOwn: boolean | null;       // null = nog niet bekend (of fiets)
   description: string | null;
   pharmacyIds: string[];
+  pharmacyMinutes: Record<string, number | null>;
   institutionIds: string[];
   timingReliable: boolean;
+  urgentAmount: number | null;
+  urgentNote: string | null;
+}
+
+// ── Facturatie (fase 7, migratie 025) ─────────────────────────────────────
+
+// Tarief van één apotheek vanaf een ingangsdatum. Een tariefwijziging is een
+// nieuwe rij, nooit een wijziging van een bestaande: oude facturen verwijzen
+// naar het tarief dat toen gold.
+export interface PharmacyRate {
+  id: string;
+  pharmacyId: string;
+  hourlyRate: number;
+  startRate: number;
+  effectiveFrom: string;   // 'YYYY-MM-DD'
+  note: string | null;
+}
+
+// Eén regel uit invoice_lines(). Namen volgen de functie 1-op-1 (snake_case),
+// zodat er geen tweede woordenlijst te onderhouden valt.
+export interface InvoiceLine {
+  shift_id: string;
+  shift_date: string;
+  shift_type: ShiftType;
+  courier_name: string | null;
+  pharmacies_in_shift: number;
+  planned_minutes: number | null;
+  share_pct: number;
+  shift_planned_minutes: number | null;
+  shift_actual_minutes: number | null;
+  billed_minutes: number;
+  from_declaration: boolean;
+  hourly_rate: number | null;
+  rate_id: string | null;
+  hours_amount: number | null;
+  start_amount: number | null;
+  travel_amount: number | null;
+  urgent_amount: number | null;
+  urgent_note: string | null;
+  line_total: number | null;
+  incomplete: boolean;
+  reason: string | null;
 }
 
 // ── Nadeclaratie (fase 6, migraties 018/019) ──────────────────────────────

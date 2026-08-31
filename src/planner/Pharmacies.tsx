@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Check, Info, X } from 'lucide-react';
-import { Pharmacy } from '../types';
+import { Building2, Check, Euro, Info, Trash2, X } from 'lucide-react';
+import { Pharmacy, PharmacyRate } from '../types';
 import { getPharmacies, setPharmacyCity } from './plannerService';
+import { deletePharmacyRate, euro, getPharmacyRates, setPharmacyRate } from './invoiceService';
 
 interface Props {
   onClose: () => void;
 }
 
-// Apotheekbeheer: op dit moment één veld, de plaatsnaam (migratie 024).
+// Apotheekbeheer: de plaatsnaam (migratie 024) en de tarieven (migratie 025).
 //
 // Die plaats bestond al in het schema van de bezorg-app, maar was nergens te
 // vullen. Hij wordt hier met de hand ingevoerd en niet uit het adres gevist: de
@@ -26,6 +27,12 @@ export default function Pharmacies({ onClose }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [savedId, setSavedId] = useState<string | null>(null);
+
+  // Tarieven van één opengeklapte apotheek (fase 7). Eén tegelijk: de lijst is
+  // kort en twee open panelen naast elkaar leest niemand.
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [rates, setRates] = useState<PharmacyRate[]>([]);
+  const [rateForm, setRateForm] = useState({ hourly: '', start: '', from: '', note: '' });
 
   async function reload() {
     setLoading(true);
@@ -58,6 +65,61 @@ export default function Pharmacies({ onClose }: Props) {
   function isDirty(id: string): boolean {
     if (!(id in drafts)) return false;
     return drafts[id].trim() !== (pharmacies.find((p) => p.id === id)?.city ?? '');
+  }
+
+  async function openRates(id: string) {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    setRates([]);
+    setRateForm({ hourly: '', start: '', from: new Date().toISOString().slice(0, 10), note: '' });
+    setRowError((m) => ({ ...m, [id]: '' }));
+    try {
+      setRates(await getPharmacyRates(id));
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [id]: e?.message ?? 'Tarieven laden mislukt.' }));
+    }
+  }
+
+  async function saveRate(id: string) {
+    const hourly = Number(rateForm.hourly.replace(',', '.'));
+    const start = rateForm.start.trim() === '' ? 0 : Number(rateForm.start.replace(',', '.'));
+    setRowError((m) => ({ ...m, [id]: '' }));
+
+    if (!Number.isFinite(hourly) || hourly < 0) {
+      setRowError((m) => ({ ...m, [id]: 'Vul een geldig uurtarief in.' }));
+      return;
+    }
+    if (!Number.isFinite(start) || start < 0) {
+      setRowError((m) => ({ ...m, [id]: 'Vul een geldig starttarief in.' }));
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rateForm.from)) {
+      setRowError((m) => ({ ...m, [id]: 'Vul een ingangsdatum in.' }));
+      return;
+    }
+
+    setBusyId(id);
+    try {
+      await setPharmacyRate(id, hourly, start, rateForm.from, rateForm.note.trim() || null);
+      setRates(await getPharmacyRates(id));
+      setRateForm((f) => ({ ...f, hourly: '', start: '', note: '' }));
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [id]: e?.message ?? 'Opslaan mislukt.' }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeRate(pharmacyId: string, rateId: string) {
+    setBusyId(pharmacyId);
+    try {
+      await deletePharmacyRate(rateId);
+      setRates(await getPharmacyRates(pharmacyId));
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [pharmacyId]: e?.message ?? 'Verwijderen mislukt.' }));
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function save(id: string) {
@@ -132,6 +194,13 @@ export default function Pharmacies({ onClose }: Props) {
                       onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save(p.id); }}
                       className="w-48 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
                     />
+                    <button
+                      onClick={() => openRates(p.id)} disabled={busy}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 rounded-lg hover:border-slate-400 disabled:opacity-60 shrink-0"
+                      title="Uurtarief en starttarief van deze apotheek"
+                    >
+                      <Euro size={14} /> Tarieven
+                    </button>
                     <div className="w-24 shrink-0 flex items-center justify-end">
                       {dirty && (
                         <button
@@ -147,6 +216,94 @@ export default function Pharmacies({ onClose }: Props) {
                     </div>
                   </div>
                   {err && <p className="text-xs text-red-600 mt-1">{err}</p>}
+
+                  {/* Tarieven van deze apotheek. Een wijziging is een NIEUWE rij
+                      met een eigen ingangsdatum: een oude factuur moet later nog
+                      met het toen geldende tarief te herleiden zijn. Dezelfde
+                      datum opnieuw invoeren corrigeert die ene rij. */}
+                  {openId === p.id && (
+                    <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3 space-y-3">
+                      {rates.length > 0 ? (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                              <th className="font-medium pb-1">Vanaf</th>
+                              <th className="font-medium pb-1">Per uur</th>
+                              <th className="font-medium pb-1">Start</th>
+                              <th className="font-medium pb-1"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {rates.map((r, i) => (
+                              <tr key={r.id}>
+                                <td className="py-1 tabular-nums">
+                                  {r.effectiveFrom}
+                                  {i === 0 && <span className="ml-1.5 text-xs text-green-700">huidig</span>}
+                                </td>
+                                <td className="py-1 tabular-nums">{euro(r.hourlyRate)}</td>
+                                <td className="py-1 tabular-nums">{euro(r.startRate)}</td>
+                                <td className="py-1 text-right">
+                                  <button
+                                    onClick={() => removeRate(p.id, r.id)} disabled={busy}
+                                    className="text-slate-400 hover:text-red-600 disabled:opacity-60"
+                                    title="Alleen voor een verkeerd ingevoerde rij — een tarief dat echt gegolden heeft laat je staan"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="text-sm text-amber-700">
+                          Nog geen tarief. Zonder tarief blijven de factuurregels van deze apotheek
+                          zonder bedrag en gemarkeerd staan.
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-end gap-2">
+                        <label className="text-xs text-slate-500">
+                          <span className="block mb-1">Per uur (€)</span>
+                          <input
+                            type="text" inputMode="decimal" value={rateForm.hourly} disabled={busy}
+                            onChange={(e) => setRateForm((f) => ({ ...f, hourly: e.target.value }))}
+                            placeholder="0,00"
+                            className="w-24 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums bg-white"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-500">
+                          <span className="block mb-1">Starttarief (€)</span>
+                          <input
+                            type="text" inputMode="decimal" value={rateForm.start} disabled={busy}
+                            onChange={(e) => setRateForm((f) => ({ ...f, start: e.target.value }))}
+                            placeholder="0,00"
+                            className="w-24 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums bg-white"
+                          />
+                        </label>
+                        <label className="text-xs text-slate-500">
+                          <span className="block mb-1">Vanaf</span>
+                          <input
+                            type="date" value={rateForm.from} disabled={busy}
+                            onChange={(e) => setRateForm((f) => ({ ...f, from: e.target.value }))}
+                            className="border border-slate-300 rounded-lg px-2 py-1 text-sm bg-white"
+                          />
+                        </label>
+                        <button
+                          onClick={() => saveRate(p.id)} disabled={busy}
+                          className="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
+                        >
+                          {busy ? '…' : 'Vastleggen'}
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-slate-400">
+                        Een tariefwijziging is een nieuwe regel met een eigen ingangsdatum; de oude
+                        blijft staan zodat een oude factuur herleidbaar blijft. Dezelfde datum opnieuw
+                        invoeren corrigeert die regel.
+                      </p>
+                    </div>
+                  )}
                 </li>
               );
             })}

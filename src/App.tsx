@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, CalendarClock, FileText, Home, LogOut, Phone, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Trash2 } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -10,6 +10,7 @@ import PharmacySchedule from './planner/PharmacySchedule';
 import CourierContacts from './planner/CourierContacts';
 import CourierAddresses from './planner/CourierAddresses';
 import Pharmacies from './planner/Pharmacies';
+import Invoicing from './planner/Invoicing';
 import Declarations from './planner/Declarations';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
@@ -33,6 +34,7 @@ export default function App() {
   const [showContacts, setShowContacts] = useState(false);
   const [showAddresses, setShowAddresses] = useState(false);
   const [showPharmacies, setShowPharmacies] = useState(false);
+  const [showInvoicing, setShowInvoicing] = useState(false);
   const [showDeclarations, setShowDeclarations] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -137,6 +139,13 @@ export default function App() {
             title="Standplaats en reisafstanden per koerier"
           >
             <Home size={15} /> Afstanden
+          </button>
+          <button
+            onClick={() => setShowInvoicing(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Factuurregels per apotheek per periode"
+          >
+            <Receipt size={15} /> Facturatie
           </button>
           <button
             onClick={() => setShowDeclarations(true)}
@@ -271,6 +280,8 @@ export default function App() {
       {showAddresses && <CourierAddresses onClose={() => setShowAddresses(false)} />}
 
       {showDeclarations && <Declarations onClose={() => setShowDeclarations(false)} />}
+
+      {showInvoicing && <Invoicing onClose={() => setShowInvoicing(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule

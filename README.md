@@ -47,6 +47,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `022_declaration_submit_reasons.sql` | `declaration_submit()` zegt wélke reden er is (verlopen / in behandeling / goedgekeurd); een onbekend token houdt de nietszeggende melding |
 | `023_declaration_by_token_review.sql` | `declaration_by_token()` geeft ook `approved` en `disputed` terug, met `review_note`; de invulpagina toont die als leesweergave |
 | `024_pharmacy_city.sql` | `pharmacies.city` leesbaar en bewerkbaar maken via `set_pharmacy_city()` — de kolom zelf bestond al in het schema van de bezorg-app |
+| `025_pharmacy_invoicing.sql` | facturatie: `shift_pharmacies.budgeted_minutes`, `pharmacy_rates`, spoedbedrag op `shifts`, en `invoice_lines()` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -70,6 +71,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `022_declaration_submit_reasons_test.sql` | de vier uitkomsten van indienen (28000 / 45001 / 45002 / 45003), dat een onbekend token exact dezelfde tekst houdt, en dat gewoon indienen nog werkt |
 | `023_declaration_by_token_review_test.sql` | beoordeelde declaraties komen terug mét status en reden, een verlopen of onbekend token nog steeds niet, en opslaan blijft geweigerd |
 | `024_pharmacy_city_test.sql` | plaats zetten (getrimd), leeg opslaan wist het veld, onbekende apotheek geeft een fout, en een koerier mag het niet |
+| `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
 `014_invitations_rls_test.sql` doet zich voor als een gewone gebruiker met
@@ -317,6 +319,51 @@ schrijfwijzen lopen uiteen, en dan staan "Hilversum" en "1213 BE Hilversum" als
 twee plaatsen in het overzicht. Een foute groepering is erger dan geen
 groepering, want die eerste ziet niemand. Het invoerveld biedt de al gebruikte
 plaatsen als suggestie aan, zodat er niet per ongeluk twee schrijfwijzen ontstaan.
+
+## Facturatie (fase 7) — migratie nog niet gedraaid
+
+Het ontwerp met alle redenen staat in
+[`docs/FASE7_FACTURATIE_ONTWERP.md`](docs/FASE7_FACTURATIE_ONTWERP.md).
+
+Uit de planning en de nadeclaraties factuurregels afleiden per apotheek per
+periode. **Er wordt niets gegenereerd en niets verstuurd** — dit is een model en
+een overzicht.
+
+```
+Uren        naar rato van de geplande minuten per apotheek, in beide richtingen
+Starttarief NIET verdeeld: elke apotheek een volledige, tegen haar eigen tarief
+Reiskosten  naar rato, zelfde verhouding als de uren
+Spoed       alleen het telefonisch afgesproken bedrag; geen uren, geen starttarief
+```
+
+> ⚠ De opdracht spreekt van `shift_type = 'spoed'`; die waarde bestaat niet. Het
+> type heet **`urgent`** (migratie 001), "Spoed" is het label in de interface.
+
+### Wat je moet invullen voordat het klopt
+
+1. **Tarieven per apotheek** — *Apotheken → Tarieven*. Er worden er bewust geen
+   voorgevuld: anders dan bij de kilometervergoeding is er geen landelijk getal om
+   op terug te vallen, en een verzonnen tarief merk je pas als de factuur weg is.
+   Zonder tarief blijft elke regel van die apotheek zonder bedrag én gemarkeerd.
+2. **Geplande minuten per apotheek** — in *Dienst toevoegen* / *Dienst bewerken*,
+   per aangevinkte apotheek. Alleen nodig bij gedeelde diensten; ontbreekt het,
+   dan wordt gelijk verdeeld en de regel gemarkeerd.
+
+### Markeringen
+
+Amber betekent: er ontbrak iets, of er is iets opvallends. De regel wordt wél
+berekend met wat er is — een factuur wordt hier niet door opgehouden. Een regel
+zonder tarief heeft geen totaal en telt apart, zodat een subtotaal nooit
+stilzwijgend te laag is.
+
+De afwijkingsgrens (standaard 25%) is instelbaar:
+
+```sql
+UPDATE public.invoice_settings SET deviation_pct = 40;
+```
+
+Concepten (`status = 'draft'`) tellen niet mee: die zijn niet bevestigd en dus
+geen opdracht.
 
 ## Nadeclaratie (fase 6) — nog niet aangezet
 

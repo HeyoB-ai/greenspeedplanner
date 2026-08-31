@@ -94,7 +94,7 @@ export async function getShiftsForWeek(
 
   const { data: shifts, error } = await sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id, urgent_amount, urgent_note')
     .gte('shift_date', startDate)
     .lte('shift_date', endDate)
     .order('start_time', { ascending: true });
@@ -105,17 +105,23 @@ export async function getShiftsForWeek(
   const ids = rows.map((s: any) => s.id);
 
   const [{ data: sp }, { data: si }, couriers] = await Promise.all([
-    sb.from('shift_pharmacies').select('shift_id, pharmacy_id').in('shift_id', ids),
+    sb.from('shift_pharmacies').select('shift_id, pharmacy_id, budgeted_minutes').in('shift_id', ids),
     sb.from('shift_institutions').select('shift_id, institution_id').in('shift_id', ids),
     getCouriers(),
   ]);
 
   const courierName = new Map(couriers.map((c) => [c.id, c.name]));
   const pharmaciesByShift = new Map<string, string[]>();
+  // Geplande minuten per (dienst, apotheek). Los van de id-lijst omdat de rest
+  // van de app alleen de ids nodig heeft.
+  const minutesByShift = new Map<string, Record<string, number | null>>();
   (sp ?? []).forEach((r: any) => {
     const list = pharmaciesByShift.get(r.shift_id) ?? [];
     list.push(r.pharmacy_id);
     pharmaciesByShift.set(r.shift_id, list);
+    const mins = minutesByShift.get(r.shift_id) ?? {};
+    mins[r.pharmacy_id] = r.budgeted_minutes ?? null;
+    minutesByShift.set(r.shift_id, mins);
   });
   const institutionsByShift = new Map<string, string[]>();
   (si ?? []).forEach((r: any) => {
@@ -137,6 +143,9 @@ export async function getShiftsForWeek(
     carIsOwn: s.car_is_own ?? null,
     description: s.description,
     pharmacyIds: pharmaciesByShift.get(s.id) ?? [],
+    pharmacyMinutes: minutesByShift.get(s.id) ?? {},
+    urgentAmount: s.urgent_amount != null ? Number(s.urgent_amount) : null,
+    urgentNote: s.urgent_note ?? null,
     institutionIds: institutionsByShift.get(s.id) ?? [],
     timingReliable: s.timing_reliable ?? false,
     scheduleId: s.schedule_id ?? null,
@@ -181,6 +190,11 @@ export async function getCourierShiftsOnDate(
     carIsOwn: s.car_is_own ?? null,
     description: s.description,
     pharmacyIds: byShift.get(s.id) ?? [],
+    // Deze lijst dient alleen de conflictdetectie; die kijkt naar tijden, niet
+    // naar minuten of bedragen. Vandaar leeg in plaats van een extra query.
+    pharmacyMinutes: {},
+    urgentAmount: null,
+    urgentNote: null,
     institutionIds: [],
     timingReliable: s.timing_reliable ?? false,
     scheduleId: s.schedule_id ?? null,
@@ -207,6 +221,10 @@ export async function createShift(input: NewShiftInput): Promise<string> {
       // hem later naar 'planned'.
       description: input.description,
       timing_reliable: input.timingReliable,
+      // Alleen bij spoed; de trigger uit migratie 025 weigert ze bij een ander
+      // type, dus expliciet null meesturen in plaats van laten hangen.
+      urgent_amount: input.shiftType === 'urgent' ? input.urgentAmount : null,
+      urgent_note: input.shiftType === 'urgent' ? input.urgentNote : null,
       created_by: session?.user.id ?? null,
     })
     .select('id')
@@ -218,7 +236,11 @@ export async function createShift(input: NewShiftInput): Promise<string> {
   if (input.pharmacyIds.length > 0) {
     const { error: spErr } = await sb
       .from('shift_pharmacies')
-      .insert(input.pharmacyIds.map((pid) => ({ shift_id: shiftId, pharmacy_id: pid })));
+      .insert(input.pharmacyIds.map((pid) => ({
+        shift_id: shiftId,
+        pharmacy_id: pid,
+        budgeted_minutes: input.pharmacyMinutes[pid] ?? null,
+      })));
     if (spErr) throw spErr;
   }
 
@@ -272,14 +294,19 @@ export async function updateShift(shiftId: string, input: NewShiftInput): Promis
       car_is_own: input.transportMode === 'car' ? input.carIsOwn : null,
       description: input.description,
       timing_reliable: input.timingReliable,
+      // Altijd meeschrijven, net als car_is_own: zou dit bij een typewissel
+      // blijven staan, dan hangt er een spoedbedrag aan een reguliere dienst en
+      // weigert de trigger uit migratie 025 de hele update.
+      urgent_amount: input.shiftType === 'urgent' ? input.urgentAmount : null,
+      urgent_note: input.shiftType === 'urgent' ? input.urgentNote : null,
     })
     .eq('id', shiftId);
   if (error) throw error;
 
-  // shift_pharmacies synchroniseren.
-  await syncJunction(
-    'shift_pharmacies', 'pharmacy_id', shiftId, input.pharmacyIds,
-  );
+  // shift_pharmacies synchroniseren, inclusief de geplande minuten. Kan niet via
+  // syncJunction: die kijkt alleen naar wélke koppelingen er zijn, en dan zou een
+  // gewijzigd aantal minuten op een blijvende koppeling niet worden opgeslagen.
+  await syncPharmacies(shiftId, input.pharmacyIds, input.pharmacyMinutes);
 
   // shift_institutions synchroniseren. Bij een niet-instelling-dienst mogen er
   // géén instelling-koppelingen overblijven.
@@ -287,6 +314,51 @@ export async function updateShift(shiftId: string, input: NewShiftInput): Promis
   await syncJunction(
     'shift_institutions', 'institution_id', shiftId, wantedInstitutions,
   );
+}
+
+// Apotheken van een dienst bijwerken: weghalen wat weg moet, en de rest in één
+// upsert neerzetten. De upsert dekt twee gevallen tegelijk — een nieuwe apotheek
+// erbij, en een gewijzigd aantal minuten op een apotheek die er al aan hing.
+async function syncPharmacies(
+  shiftId: string,
+  wantedIds: string[],
+  minutes: Record<string, number | null>,
+): Promise<void> {
+  const sb = requireClient();
+
+  const { data: current, error: readErr } = await sb
+    .from('shift_pharmacies')
+    .select('pharmacy_id')
+    .eq('shift_id', shiftId);
+  if (readErr) throw readErr;
+
+  const wanted = new Set(wantedIds);
+  const toRemove = (current ?? [])
+    .map((r: any) => r.pharmacy_id as string)
+    .filter((id) => !wanted.has(id));
+
+  if (toRemove.length > 0) {
+    const { error: delErr } = await sb
+      .from('shift_pharmacies')
+      .delete()
+      .eq('shift_id', shiftId)
+      .in('pharmacy_id', toRemove);
+    if (delErr) throw delErr;
+  }
+
+  if (wantedIds.length > 0) {
+    const { error: upErr } = await sb
+      .from('shift_pharmacies')
+      .upsert(
+        wantedIds.map((pid) => ({
+          shift_id: shiftId,
+          pharmacy_id: pid,
+          budgeted_minutes: minutes[pid] ?? null,
+        })),
+        { onConflict: 'shift_id,pharmacy_id' },
+      );
+    if (upErr) throw upErr;
+  }
 }
 
 // Verschil bepalen tussen huidige en gewenste koppelingen en alleen dat muteren.
