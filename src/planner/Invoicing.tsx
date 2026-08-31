@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Info, Receipt, X } from 'lucide-react';
 import { InvoiceLine, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
-import { euro, getInvoiceLines, hoursText, sumLines } from './invoiceService';
+import { amount, euro, getInvoiceLines, hoursText, sumLines } from './invoiceService';
 import { TYPE_STYLES } from './constants';
 
 interface Props {
@@ -140,11 +140,15 @@ export default function Invoicing({ onClose }: Props) {
                     <th className="py-2 px-3 font-medium text-right">Gepland</th>
                     <th className="py-2 px-3 font-medium text-right">Werkelijk</th>
                     <th className="py-2 px-3 font-medium text-right">Aandeel</th>
-                    <th className="py-2 px-3 font-medium text-right">Uren</th>
-                    <th className="py-2 px-3 font-medium text-right">Start</th>
-                    <th className="py-2 px-3 font-medium text-right">Reis</th>
-                    <th className="py-2 px-3 font-medium text-right">Spoed</th>
-                    <th className="py-2 pl-3 font-medium text-right">Totaal</th>
+                    {/* Het euroteken staat hier en op de totaalregel, niet in elke
+                        cel: vijf bedragkolommen naast elkaar hebben die breedte
+                        niet, en te weinig breedte betekent een afgebroken bedrag
+                        met het teken bóven het getal. */}
+                    <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[6rem]">Uren (€)</th>
+                    <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Start (€)</th>
+                    <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Reis (€)</th>
+                    <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Spoed (€)</th>
+                    <th className="py-2 pl-3 font-medium text-right whitespace-nowrap min-w-[6.5rem]">Totaal (€)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -158,11 +162,14 @@ export default function Invoicing({ onClose }: Props) {
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${TYPE_STYLES[l.shift_type].bg} ${TYPE_STYLES[l.shift_type].text}`}>
                           {TYPE_STYLES[l.shift_type].label}
                         </span>
+                        {/* Toelichting en markering mogen wél afbreken — dat is
+                            tekst. Met een maximum, anders duwt één lange reden de
+                            bedragkolommen de tabel uit. */}
                         {l.urgent_note && (
-                          <div className="text-xs text-slate-500 mt-0.5 italic">“{l.urgent_note}”</div>
+                          <div className="text-xs text-slate-500 mt-0.5 italic max-w-[20rem]">“{l.urgent_note}”</div>
                         )}
                         {l.incomplete && (
-                          <div className="text-xs text-amber-700 mt-0.5">{l.reason}</div>
+                          <div className="text-xs text-amber-700 mt-0.5 max-w-[20rem]">{l.reason}</div>
                         )}
                       </td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">
@@ -178,32 +185,32 @@ export default function Invoicing({ onClose }: Props) {
                         {l.pharmacies_in_shift > 1 ? `${Number(l.share_pct).toFixed(0)}%` : '—'}
                       </td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">
-                        {euro(l.hours_amount)}
+                        {amount(l.hours_amount)}
                         {l.hourly_rate != null && (
-                          <div className="text-xs text-slate-400">{euro(l.hourly_rate)}/u</div>
+                          <div className="text-xs text-slate-400 whitespace-nowrap">{amount(l.hourly_rate)}/u</div>
                         )}
                       </td>
-                      <td className="py-2 px-3 align-top text-right tabular-nums">{euro(l.start_amount)}</td>
-                      <td className="py-2 px-3 align-top text-right tabular-nums">{euro(l.travel_amount)}</td>
-                      <td className="py-2 px-3 align-top text-right tabular-nums">{euro(l.urgent_amount)}</td>
-                      <td className="py-2 pl-3 align-top text-right tabular-nums font-medium">
-                        {euro(l.line_total)}
+                      <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.start_amount)}</td>
+                      <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.travel_amount)}</td>
+                      <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.urgent_amount)}</td>
+                      <td className="py-2 pl-3 align-top text-right tabular-nums whitespace-nowrap font-medium">
+                        {amount(l.line_total)}
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="border-t-2 border-slate-300 font-medium">
-                    <td className="py-2 pr-3" colSpan={4}>
+                  <tr className="border-t-[3px] border-slate-800 bg-slate-50 font-semibold text-slate-900">
+                    <td className="py-2.5 pr-3" colSpan={4}>
                       {lines.length} regel{lines.length === 1 ? '' : 's'} · {pharmacyName}
                     </td>
-                    <td className="py-2 px-3 text-right tabular-nums">{hoursText(totals.billedMinutes)}</td>
-                    <td className="py-2 px-3"></td>
-                    <td className="py-2 px-3 text-right tabular-nums">{euro(totals.hours)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{euro(totals.start)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{euro(totals.travel)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{euro(totals.urgent)}</td>
-                    <td className="py-2 pl-3 text-right tabular-nums text-base">{euro(totals.total)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{hoursText(totals.billedMinutes)}</td>
+                    <td className="py-2.5 px-3"></td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.hours)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.start)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.travel)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.urgent)}</td>
+                    <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(totals.total)}</td>
                   </tr>
                 </tfoot>
               </table>

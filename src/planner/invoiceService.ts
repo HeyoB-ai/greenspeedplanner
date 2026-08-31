@@ -98,9 +98,18 @@ export function sumLines(lines: InvoiceLine[]): InvoiceTotals {
   return t;
 }
 
-export function euro(amount: number | null): string {
-  if (amount == null) return '—';
-  return `€ ${Number(amount).toFixed(2).replace('.', ',')}`;
+export function euro(value: number | null): string {
+  if (value == null) return '—';
+  return `€ ${Number(value).toFixed(2).replace('.', ',')}`;
+}
+
+// Alleen het getal, zonder euroteken. In een tabel met vijf bedragkolommen kost
+// dat teken per cel breedte die er niet is, en bij te weinig breedte breekt
+// "€ 12,34" af — dan staat het teken bóven het bedrag. Het teken staat daarom
+// één keer in de kolomkop en één keer op de totaalregel.
+export function amount(value: number | null): string {
+  if (value == null) return '—';
+  return Number(value).toFixed(2).replace('.', ',');
 }
 
 // Minuten als '4:35' — in een factuuroverzicht staan uren naast bedragen, en
