@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Info, Receipt, X } from 'lucide-react';
-import { InvoiceLine, Pharmacy } from '../types';
+import { Chain, InvoiceLine, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
-import { amount, euro, getInvoiceLines, hoursText, sumLines } from './invoiceService';
+import {
+  amount, euro, getChainInvoiceLines, getChains, getInvoiceLines, hoursText, sumLines,
+} from './invoiceService';
 import { TYPE_STYLES } from './constants';
 
 interface Props {
@@ -29,34 +31,54 @@ function lastMonth(): { from: string; to: string } {
 export default function Invoicing({ onClose }: Props) {
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [pharmacyId, setPharmacyId] = useState('');
+  // Aan wie factureren we: het filiaal of de keten. Alleen zinvol bij een
+  // keten met de splitsing aan; anders staat er in de ketenkolom overal 0.
+  const [chains, setChains] = useState<Chain[]>([]);
+  const [mode, setMode] = useState<'pharmacy' | 'chain'>('pharmacy');
+  const [chainId, setChainId] = useState('');
   const [period, setPeriod] = useState(lastMonth);
   const [lines, setLines] = useState<InvoiceLine[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    getPharmacies()
-      .then((ps) => {
+    Promise.all([getPharmacies(), getChains()])
+      .then(([ps, cs]) => {
         setPharmacies(ps);
+        setChains(cs);
         if (ps.length > 0) setPharmacyId((cur) => cur || ps[0].id);
+        const split = cs.filter((c) => c.split_extra_work);
+        if (split.length > 0) setChainId((cur) => cur || split[0].group_id);
       })
       .catch((e: any) => setError(e?.message ?? 'Apotheken laden mislukt.'));
   }, []);
 
   useEffect(() => {
-    if (!pharmacyId) return;
     let cancelled = false;
     setLoading(true);
-    getInvoiceLines(pharmacyId, period.from, period.to)
+
+    const load = mode === 'chain'
+      ? getChainInvoiceLines(
+          pharmacies.filter((p) => p.groupId === chainId).map((p) => p.id),
+          period.from, period.to)
+      : (pharmacyId ? getInvoiceLines(pharmacyId, period.from, period.to) : Promise.resolve([]));
+
+    load
       .then((rows) => { if (!cancelled) { setLines(rows); setError(''); } })
       .catch((e: any) => { if (!cancelled) { setLines([]); setError(e?.message ?? 'Laden mislukt.'); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [pharmacyId, period.from, period.to]);
+  }, [mode, pharmacyId, chainId, pharmacies, period.from, period.to]);
 
   const totals = useMemo(() => sumLines(lines), [lines]);
   const pharmacyName = useMemo(
     () => pharmacies.find((p) => p.id === pharmacyId)?.name ?? '', [pharmacies, pharmacyId]);
+  const chainName = useMemo(
+    () => chains.find((c) => c.group_id === chainId)?.group_name ?? '', [chains, chainId]);
+  const splitChains = useMemo(() => chains.filter((c) => c.split_extra_work), [chains]);
+  // In ketenmodus telt alleen het ketendeel; op een filiaalfactuur alleen het
+  // filiaaldeel. Zonder splitsing is dat laatste gewoon het hele bedrag.
+  const invoiceTotal = mode === 'chain' ? totals.chain : totals.branch;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -73,15 +95,50 @@ export default function Invoicing({ onClose }: Props) {
 
         <div className="p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="inline-flex items-center gap-1.5">
-              <span className="text-slate-500">Apotheek</span>
-              <select
-                value={pharmacyId} onChange={(e) => setPharmacyId(e.target.value)}
-                className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
-              >
-                {pharmacies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
+            {/* Factureren aan het filiaal of aan de keten. De ketenkeuze
+                verschijnt alleen als er een keten mét splitsing is; anders is er
+                niets te kiezen en zou hij verwarren. */}
+            {splitChains.length > 0 && (
+              <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+                {([
+                  ['pharmacy', 'Filiaal'],
+                  ['chain', 'Keten'],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key} onClick={() => setMode(key)}
+                    className={`px-2.5 py-1 ${
+                      mode === key ? 'bg-green-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mode === 'chain' ? (
+              <label className="inline-flex items-center gap-1.5">
+                <span className="text-slate-500">Keten</span>
+                <select
+                  value={chainId} onChange={(e) => setChainId(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+                >
+                  {splitChains.map((c) => (
+                    <option key={c.group_id} value={c.group_id}>{c.group_name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="inline-flex items-center gap-1.5">
+                <span className="text-slate-500">Apotheek</span>
+                <select
+                  value={pharmacyId} onChange={(e) => setPharmacyId(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+                >
+                  {pharmacies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+            )}
             <label className="inline-flex items-center gap-1.5">
               <span className="text-slate-500">Van</span>
               <input
@@ -205,7 +262,15 @@ export default function Invoicing({ onClose }: Props) {
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.expenses_amount)}</td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.urgent_amount)}</td>
                       <td className="py-2 pl-3 align-top text-right tabular-nums whitespace-nowrap font-medium">
-                        {amount(l.line_total)}
+                        {/* In ketenmodus staat hier het ketendeel, anders het deel
+                            dat naar dit filiaal gaat. Zonder splitsing zijn die
+                            twee hetzelfde als het regeltotaal. */}
+                        {amount(mode === 'chain' ? l.chain_amount : l.branch_amount)}
+                        {l.split_active && (
+                          <div className="text-xs font-normal text-slate-400">
+                            van {amount(l.line_total)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -213,7 +278,13 @@ export default function Invoicing({ onClose }: Props) {
                 <tfoot>
                   <tr className="border-t-[3px] border-slate-800 bg-slate-50 font-semibold text-slate-900">
                     <td className="py-2.5 pr-3" colSpan={4}>
-                      {lines.length} regel{lines.length === 1 ? '' : 's'} · {pharmacyName}
+                      {lines.length} regel{lines.length === 1 ? '' : 's'} ·{' '}
+                      {mode === 'chain' ? `${chainName} (centraal)` : pharmacyName}
+                      {mode === 'chain' && totals.branch > 0 && (
+                        <span className="font-normal text-slate-500">
+                          {' '}— {euro(totals.branch)} gaat naar de filialen
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{hoursText(totals.billedMinutes)}</td>
                     <td className="py-2.5 px-3"></td>
@@ -222,7 +293,7 @@ export default function Invoicing({ onClose }: Props) {
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.travel)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.expenses)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.urgent)}</td>
-                    <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(totals.total)}</td>
+                    <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(invoiceTotal)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -254,6 +325,12 @@ export default function Invoicing({ onClose }: Props) {
               <p>
                 Bij <strong>spoed</strong> telt alleen het telefonisch afgesproken bedrag — geen uren,
                 geen starttarief. De koerier krijgt zijn uren gewoon via de declaratie.
+              </p>
+              <p>
+                Staat bij een keten de <strong>splitsing</strong> aan, dan gaan de gebudgetteerde uren
+                en het starttarief naar het centrale adres en blijven het goedgekeurde meerwerk, de
+                reiskosten, de onkosten en spoed bij het filiaal. Het bedrag in de laatste kolom is
+                het deel voor de gekozen ontvanger; eronder staat het regeltotaal.
               </p>
               <p>
                 Amber betekent: er ontbrak iets, of er is iets opvallends. De regel wordt wel

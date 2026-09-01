@@ -30,6 +30,18 @@ export interface Pharmacy {
   // Waar meerwerkmeldingen heen gaan (migratie 031). Zonder adres kan een
   // melding niet vrijgegeven worden.
   billingEmail: string | null;
+  // De keten waar deze apotheek bij hoort (pharmacies."groupId"). Bepaalt of de
+  // factuur gesplitst wordt (migratie 032).
+  groupId: string | null;
+}
+
+// Eén keten met zijn facturatie-instelling (migratie 032).
+export interface Chain {
+  group_id: string;
+  group_name: string;
+  billing_email: string | null;
+  split_extra_work: boolean;
+  pharmacies: number;
 }
 
 export interface Institution {
@@ -211,6 +223,13 @@ export interface InvoiceLine {
   // maar bij expired heeft nooit iemand gekeken — dat moet zichtbaar blijven.
   extra_work_status: ExtraWorkStatus | null;
   extra_work_minutes: number | null;
+  // Verdeling over keten en filiaal (migratie 032). Staat de splitsing uit, dan
+  // is chain_amount 0 en branch_amount het hele bedrag. Samen altijd line_total.
+  chain_id: string | null;
+  chain_name: string | null;
+  split_active: boolean;
+  chain_amount: number | null;
+  branch_amount: number | null;
   urgent_amount: number | null;
   urgent_note: string | null;
   line_total: number | null;

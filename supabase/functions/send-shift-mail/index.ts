@@ -111,6 +111,9 @@ interface OutboxRow {
     planned_end?: string;
     extra_minutes?: number;
     respond_hours?: number;
+    // true bij een keten met de factuursplitsing aan: dan komt déze tijd op
+    // de eigen factuur van het filiaal en niet op die van de keten.
+    own_invoice?: boolean;
     note?: string;
   };
   created_at: string;
@@ -287,6 +290,11 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
       ];
       if (p.note) lines.push(`Toelichting: ${p.note}`);
       lines.push('Ga je akkoord met het doorbelasten van die extra tijd?');
+      if (p.own_invoice) {
+        // Zonder deze zin denkt de lezer aan de factuur die hij van zijn keten
+        // kent, en dat is precies de factuur waar dit NIET op komt.
+        lines.push('Deze tijd komt op de factuur van dit filiaal, niet op die van de keten.');
+      }
       lines.push(row.link);
       lines.push(`Zonder reactie binnen ${p.respond_hours ?? 48} uur belasten we de extra tijd door.`);
       return lines;

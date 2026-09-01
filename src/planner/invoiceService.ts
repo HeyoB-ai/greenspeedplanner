@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { InvoiceLine, PharmacyRate } from '../types';
+import { Chain, InvoiceLine, PharmacyRate } from '../types';
 
 // ── Facturatie richting apotheken (fase 7, migratie 025) ──────────────────
 // Alle bedragen komen uit invoice_lines(); er staat hier geen tarief en geen
@@ -20,6 +20,35 @@ export async function getInvoiceLines(
   });
   if (error) throw error;
   return (data ?? []) as InvoiceLine[];
+}
+
+// De ketens met hun facturatie-instelling (migratie 032).
+export async function getChains(): Promise<Chain[]> {
+  const sb = requireClient();
+  const { data, error } = await sb.rpc('chain_overview');
+  if (error) throw error;
+  return (data ?? []) as Chain[];
+}
+
+export async function setChainBilling(
+  groupId: string, email: string | null, split: boolean,
+): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.rpc('set_group_billing', {
+    p_group_id: groupId, p_email: email, p_split: split,
+  });
+  if (error) throw error;
+}
+
+// De factuur van een keten: de regels van al haar filialen, waarvan alleen het
+// ketendeel meetelt. Bewust hier en niet in SQL — zie de toelichting in
+// migratie 032 — en het gaat om een handvol apotheken per keten.
+export async function getChainInvoiceLines(
+  pharmacyIds: string[], fromISO: string, toISO: string,
+): Promise<InvoiceLine[]> {
+  const perPharmacy = await Promise.all(
+    pharmacyIds.map((id) => getInvoiceLines(id, fromISO, toISO)));
+  return perPharmacy.flat();
 }
 
 export async function getPharmacyRates(pharmacyId: string): Promise<PharmacyRate[]> {
@@ -93,12 +122,16 @@ export interface InvoiceTotals {
   lines: number;
   incomplete: number;
   withoutTotal: number;
+  // Verdeling over de twee facturen (migratie 032). Zonder splitsing is chain 0.
+  chain: number;
+  branch: number;
 }
 
 export function sumLines(lines: InvoiceLine[]): InvoiceTotals {
   const t: InvoiceTotals = {
     hours: 0, start: 0, travel: 0, expenses: 0, urgent: 0, total: 0,
     billedMinutes: 0, lines: lines.length, incomplete: 0, withoutTotal: 0,
+    chain: 0, branch: 0,
   };
   for (const l of lines) {
     t.hours  += Number(l.hours_amount ?? 0);
@@ -109,6 +142,8 @@ export function sumLines(lines: InvoiceLine[]): InvoiceTotals {
     t.billedMinutes += Number(l.billed_minutes ?? 0);
     if (l.line_total == null) t.withoutTotal += 1;
     else t.total += Number(l.line_total);
+    t.chain  += Number(l.chain_amount ?? 0);
+    t.branch += Number(l.branch_amount ?? 0);
     if (l.incomplete) t.incomplete += 1;
   }
   return t;

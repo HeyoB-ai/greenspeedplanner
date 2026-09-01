@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Check, Euro, Info, Trash2, X } from 'lucide-react';
-import { Pharmacy, PharmacyRate } from '../types';
+import { Chain, Pharmacy, PharmacyRate } from '../types';
 import { getPharmacies, setPharmacyBillingEmail, setPharmacyCity } from './plannerService';
-import { deletePharmacyRate, euro, getPharmacyRates, setPharmacyRate } from './invoiceService';
+import {
+  deletePharmacyRate, euro, getChains, getPharmacyRates, setChainBilling, setPharmacyRate,
+} from './invoiceService';
 
 interface Props {
   onClose: () => void;
@@ -20,6 +22,8 @@ interface Props {
 // schrijfrechten, want die zouden voor élke kolom gelden.
 export default function Pharmacies({ onClose }: Props) {
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
+  const [chains, setChains] = useState<Chain[]>([]);
+  const [chainDrafts, setChainDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -43,7 +47,9 @@ export default function Pharmacies({ onClose }: Props) {
   async function reload() {
     setLoading(true);
     try {
-      setPharmacies(await getPharmacies());
+      const [ps, cs] = await Promise.all([getPharmacies(), getChains()]);
+      setPharmacies(ps);
+      setChains(cs);
       setDrafts({});
       setError('');
     } catch (e: any) {
@@ -143,6 +149,20 @@ export default function Pharmacies({ onClose }: Props) {
     }
   }
 
+  async function saveChain(c: Chain, split: boolean) {
+    setBusyId(c.group_id);
+    setError('');
+    try {
+      await setChainBilling(c.group_id, (chainDrafts[c.group_id] ?? c.billing_email ?? '').trim() || null, split);
+      setChainDrafts((m) => { const next = { ...m }; delete next[c.group_id]; return next; });
+      await reload();
+    } catch (e: any) {
+      setError(e?.message ?? 'Opslaan mislukt.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function saveBillingEmail(id: string) {
     setBusyId(id);
     setRowError((m) => ({ ...m, [id]: '' }));
@@ -211,6 +231,53 @@ export default function Pharmacies({ onClose }: Props) {
                 {missing.length === 1 ? 'Eén apotheek heeft' : `${missing.length} apotheken hebben`} nog
                 geen plaats. Groeperen werkt pas goed als ze allemaal gevuld zijn.
               </span>
+            </div>
+          )}
+
+          {/* ── Ketens ─────────────────────────────────────────────────────
+              De splitsing staat standaard uit: dan gaat alles naar het filiaal,
+              precies zoals het altijd ging. Aanzetten kan pas met een centraal
+              adres, want anders levert het facturen op die nergens heen kunnen. */}
+          {chains.length > 0 && (
+            <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+              <p className="text-sm font-medium text-slate-800">Ketens</p>
+              <ul className="divide-y divide-slate-100">
+                {chains.map((c) => {
+                  const busy = busyId === c.group_id;
+                  return (
+                    <li key={c.group_id} className="py-2 flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 text-sm">
+                        {c.group_name}
+                        <span className="text-slate-400"> · {c.pharmacies} apothe{c.pharmacies === 1 ? 'ek' : 'ken'}</span>
+                      </span>
+                      <input
+                        type="text"
+                        value={chainDrafts[c.group_id] ?? c.billing_email ?? ''}
+                        placeholder="centraal factuuradres"
+                        disabled={busy}
+                        onChange={(e) => setChainDrafts((m) => ({ ...m, [c.group_id]: e.target.value }))}
+                        onBlur={() => {
+                          if ((chainDrafts[c.group_id] ?? '').trim() !== (c.billing_email ?? '')
+                              && c.group_id in chainDrafts) saveChain(c, c.split_extra_work);
+                        }}
+                        className="w-56 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
+                      />
+                      <label className="inline-flex items-center gap-1.5 text-sm text-slate-600 cursor-pointer">
+                        <input
+                          type="checkbox" checked={c.split_extra_work} disabled={busy}
+                          onChange={(e) => saveChain(c, e.target.checked)}
+                        />
+                        Splitsen
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-xs text-slate-400">
+                <strong>Splitsen</strong> stuurt de gebudgetteerde uren en het starttarief naar het
+                centrale adres, en het goedgekeurde meerwerk, de reiskosten en de onkosten naar het
+                filiaal. Uit = alles naar het filiaal.
+              </p>
             </div>
           )}
 

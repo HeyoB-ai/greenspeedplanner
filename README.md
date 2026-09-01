@@ -54,6 +54,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `029_employees.sql` | personeelsadministratie los van `auth.users`: `employees`, `employee_active_on()`, import, en de overname van de bestaande koeriers |
 | `030_rate_per_transport.sql` | vier uurtarieven per apotheek (fiets, auto, instelling, overig); `invoice_lines()` kiest op diensttype en vervoermiddel |
 | `031_extra_work.sql` | meerwerk: `extra_work`, de vrijgave door de planner, de goedkeuringslus met de apotheek, en `pharmacies.billing_email` |
+| `032_chain_split.sql` | factuursplitsing keten/filiaal, per keten in te schakelen: gebudgetteerde uren naar het centrale adres, meerwerk naar het filiaal |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -83,6 +84,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `029_employees_test.sql` | medewerker zonder inlogaccount, uit dienst als datum (en actief op een oude datum), import die bijwerkt in plaats van dupliceert, geen personeelsnummer, en dat een losgemaakt profiel de medewerker laat staan |
 | `030_rate_per_transport_test.sql` | het juiste tarief per diensttype en vervoermiddel, spoed ongewijzigd, een onbekend vervoermiddel zonder bedrag maar mét reden, en een starttarief van 0 als geldige waarde |
 | `031_extra_work_test.sql` | drempel, verdeling over twee apotheken, vrijgave (met en zonder adres), token en antwoord, en de drie factuuruitkomsten — plus dat de declaratie van de koerier nergens door verandert |
+| `032_chain_split_test.sql` | splitsing uit én aan, het gereserveerde blok bij korter werken, meerwerk/reiskosten/onkosten/spoed naar het filiaal, en dat keten + filiaal optelt tot het regeltotaal |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -444,6 +446,46 @@ $$);
 > ⚠ De `Authorization`-header luidt `'Bearer ' || <sleutel>` — het woord
 > `Bearer`, een spatie, dán de sleutel. Controleren doe je in
 > `net._http_response`, niet in `cron.job_run_details`.
+
+### Factuursplitsing keten / filiaal
+
+Per keten in te schakelen (*Apotheken → Ketens*), **standaard uit**. Staat hij uit,
+dan gaat alles naar het filiaal en verandert er geen cent — dat is de situatie
+voor iedereen tot iemand hem aanzet.
+
+Staat hij aan:
+
+| Naar de keten | Naar het filiaal |
+|---|---|
+| de gebudgetteerde uren | goedgekeurd of verlopen meerwerk |
+| het starttarief | reiskosten en onkosten |
+| | spoed (telefonisch met het filiaal afgesproken) |
+
+De regel in één zin: **het geplande pakket naar de keten, alles wat daarvan
+afwijkt naar het filiaal.**
+
+> ⚠ **Binnen de splitsing is het budget een gereserveerd blok.** De keten betaalt
+> de volle gebudgetteerde uren, ook als de koerier eerder klaar was. Dat is een
+> **variant, geen nieuwe hoofdregel**: zonder splitsing geldt onverkort wat er
+> stond — werkelijke uren, in beide richtingen, geen ondergrens en geen plafond.
+> Geval 3 van `025_pharmacy_invoicing_test.sql` bewaakt die oude regel, geval 9
+> van `032_chain_split_test.sql` bewaakt dat de nieuwe niet stiekem overal gaat
+> gelden.
+>
+> Gevolg om te kennen: bij een gesplitste keten kan een regeltotaal hóger
+> uitvallen dan zonder splitsing, namelijk als er korter gewerkt is.
+> `billed_minutes` blijft tonen wat er werkelijk gewerkt is.
+
+Aanzetten kan pas als er een centraal factuuradres staat — anders levert het
+facturen op die nergens heen kunnen. In het factuurscherm verschijnt dan een
+schakelaar **Filiaal / Keten**; de laatste kolom toont het deel voor de gekozen
+ontvanger, met het regeltotaal eronder.
+
+De goedkeuringslus verandert niet: het meerwerk hoort bij het filiaal dat het
+veroorzaakte, en daar ging de mail al heen. Wel staat er sinds de splitsing een
+zin bij dat déze tijd op de eigen factuur van het filiaal komt en niet op die van
+de keten — zonder die zin denkt de lezer aan de factuur die hij van zijn keten
+kent.
 
 ## Facturatie (fase 7) — migratie nog niet gedraaid
 

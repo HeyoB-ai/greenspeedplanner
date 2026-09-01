@@ -15,7 +15,7 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
   const sb = requireClient();
   const { data, error } = await sb
     .from('pharmacies')
-    .select('id, name, city, billing_email')
+    .select('id, name, city, billing_email, groupId')
     .order('name', { ascending: true });
   if (error) throw error;
   return (data ?? []).map((r: any): Pharmacy => ({
@@ -23,6 +23,7 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
     name: r.name,
     city: r.city ?? null,
     billingEmail: r.billing_email ?? null,
+    groupId: r.groupId ?? null,
   }));
 }
 
