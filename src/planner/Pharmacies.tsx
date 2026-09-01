@@ -206,7 +206,12 @@ export default function Pharmacies({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl my-8" onClick={(e) => e.stopPropagation()}>
+      {/* Breed genoeg voor naam + plaats + e-mail + knoppen op één regel. Op
+          een smal scherm wrapt de rij; de naam blijft dan bovenaan staan. */}
+      <div
+        className="bg-white rounded-xl shadow-lg w-full max-w-[95vw] xl:max-w-4xl my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <h2 className="font-semibold text-slate-800 inline-flex items-center gap-2">
             <Building2 size={16} className="text-green-700" /> Apotheken
@@ -295,8 +300,14 @@ export default function Pharmacies({ onClose }: Props) {
 
               return (
                 <li key={p.id} className="py-2.5">
-                  <div className="flex items-center gap-3">
-                    <span className="min-w-0 flex-1 text-sm font-medium text-slate-800 truncate" title={p.name}>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* min-w zorgt dat de naam nooit wordt weggedrukt door de
+                        velden ernaast — met alleen flex-1 kromp hij tot nul en
+                        bleef er van de truncate niets over. */}
+                    <span
+                      className="min-w-[12rem] flex-1 text-sm font-medium text-slate-800 truncate"
+                      title={p.name}
+                    >
                       {p.name}
                     </span>
                     <input
@@ -307,7 +318,7 @@ export default function Pharmacies({ onClose }: Props) {
                       disabled={busy}
                       onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save(p.id); }}
-                      className="w-48 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
+                      className="w-44 shrink-0 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
                     />
                     <input
                       type="text"
@@ -319,7 +330,7 @@ export default function Pharmacies({ onClose }: Props) {
                       onBlur={() => {
                         if ((mailDrafts[p.id] ?? '').trim() !== (p.billingEmail ?? '')) saveBillingEmail(p.id);
                       }}
-                      className={`w-56 border rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60 ${
+                      className={`w-52 shrink-0 border rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60 ${
                         p.billingEmail ? 'border-slate-300' : 'border-amber-300'
                       }`}
                       title="Zonder adres kan een meerwerkmelding niet vrijgegeven worden"
