@@ -27,6 +27,9 @@ export interface Pharmacy {
   // maar was nergens te vullen; sinds migratie 024 kan dat in het apotheekbeheer.
   // null = onbekend → groepeert in het weekoverzicht onder "Overig".
   city: string | null;
+  // Waar meerwerkmeldingen heen gaan (migratie 031). Zonder adres kan een
+  // melding niet vrijgegeven worden.
+  billingEmail: string | null;
 }
 
 export interface Institution {
@@ -140,10 +143,45 @@ export interface NewShiftInput {
 export interface PharmacyRate {
   id: string;
   pharmacyId: string;
-  hourlyRate: number;
+  // Vier uurtarieven sinds migratie 030: wat het werk kost hangt af van wát het
+  // is. null = geen tarief voor dat soort werk; een dienst van die soort levert
+  // dan een onvolledige factuurregel op in plaats van een nul.
+  hourlyRateBike: number | null;
+  hourlyRateCar: number | null;
+  hourlyRateInstitution: number | null;
+  hourlyRateOther: number | null;
   startRate: number;
   effectiveFrom: string;   // 'YYYY-MM-DD'
   note: string | null;
+}
+
+// ── Meerwerk (fase 9, migratie 031) ───────────────────────────────────────
+
+export type ExtraWorkStatus = 'new' | 'released' | 'approved' | 'disputed' | 'expired';
+
+// Eén meerwerkmelding, per dienst per apotheek. De planner ziet hem eerst en
+// geeft hem vrij; pas dan gaat er post naar de klant.
+export interface ExtraWorkRow {
+  extra_work_id: string;
+  shift_id: string;
+  shift_date: string;
+  pharmacy_id: string;
+  pharmacy_name: string;
+  billing_email: string | null;
+  courier_name: string | null;
+  planned_minutes: number;
+  actual_minutes: number;
+  extra_minutes: number;
+  share_pct: number;
+  share_minutes: number;
+  courier_note: string | null;
+  planner_note: string | null;
+  status: ExtraWorkStatus;
+  released_at: string | null;
+  sent_at: string | null;
+  respond_by: string | null;
+  responded_at: string | null;
+  response_note: string | null;
 }
 
 // Eén regel uit invoice_lines(). Namen volgen de functie 1-op-1 (snake_case),
@@ -169,6 +207,10 @@ export interface InvoiceLine {
   travel_amount: number | null;
   // Doorbelaste onkosten, naar rato van de geplande minuten en zonder marge.
   expenses_amount: number | null;
+  // Meerwerk (migratie 031). approved en expired leveren allebei een regel op,
+  // maar bij expired heeft nooit iemand gekeken — dat moet zichtbaar blijven.
+  extra_work_status: ExtraWorkStatus | null;
+  extra_work_minutes: number | null;
   urgent_amount: number | null;
   urgent_note: string | null;
   line_total: number | null;
@@ -263,4 +305,38 @@ export interface CourierDistance {
   distanceKm: number;
   source: 'route' | 'fallback' | 'manual';
   computedAt: string;
+}
+
+// ── Personeelsadministratie (fase 8, migratie 029) ────────────────────────
+
+export type EmploymentType = 'loondienst' | 'zzp';
+
+// Eén medewerker. Los van user_profiles: iemand kan hier staan zonder ooit in te
+// loggen, en een verwijderd inlogaccount haalt deze rij niet weg.
+export interface Employee {
+  id: string;
+  personnelNumber: string | null;   // zeven van de 69 hebben er geen
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  employmentType: EmploymentType | null;
+  hourlyWage: number | null;
+  wageStartDate: string | null;
+  homePharmacyId: string | null;
+  employedFrom: string;             // 'YYYY-MM-DD'
+  employedUntil: string | null;     // null = nog in dienst
+  userProfileId: string | null;     // gevuld zodra iemand kan inloggen
+  note: string | null;
+  isActive: boolean;                // uit employees_active; datum, geen vinkje
+}
+
+// Wat de import per rij terugmeldt, zodat het scherm een verslag kan tonen in
+// plaats van "69 verwerkt".
+export interface EmployeeImportResult {
+  row_number: number;
+  personnel_number: string | null;
+  full_name: string;
+  action: 'nieuw' | 'bijgewerkt' | 'overgeslagen';
+  note: string | null;
 }

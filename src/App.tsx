@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, CalendarClock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Trash2, Users } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -11,6 +11,8 @@ import CourierContacts from './planner/CourierContacts';
 import CourierAddresses from './planner/CourierAddresses';
 import Pharmacies from './planner/Pharmacies';
 import Invoicing from './planner/Invoicing';
+import Employees from './planner/Employees';
+import ExtraWork from './planner/ExtraWork';
 import Declarations from './planner/Declarations';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
@@ -35,6 +37,8 @@ export default function App() {
   const [showAddresses, setShowAddresses] = useState(false);
   const [showPharmacies, setShowPharmacies] = useState(false);
   const [showInvoicing, setShowInvoicing] = useState(false);
+  const [showEmployees, setShowEmployees] = useState(false);
+  const [showExtraWork, setShowExtraWork] = useState(false);
   const [showDeclarations, setShowDeclarations] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -127,6 +131,13 @@ export default function App() {
             <Phone size={15} /> Nummers
           </button>
           <button
+            onClick={() => setShowEmployees(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Personeelsadministratie — los van wie er kan inloggen"
+          >
+            <Users size={15} /> Medewerkers
+          </button>
+          <button
             onClick={() => setShowPharmacies(true)}
             className="inline-flex items-center gap-1 hover:text-slate-900"
             title="Plaatsnaam per apotheek — bepaalt de groepen in het weekoverzicht"
@@ -139,6 +150,13 @@ export default function App() {
             title="Standplaats en reisafstanden per koerier"
           >
             <Home size={15} /> Afstanden
+          </button>
+          <button
+            onClick={() => setShowExtraWork(true)}
+            className="inline-flex items-center gap-1 hover:text-slate-900"
+            title="Uitgelopen diensten vrijgeven voor goedkeuring door de apotheek"
+          >
+            <Clock size={15} /> Meerwerk
           </button>
           <button
             onClick={() => setShowInvoicing(true)}
@@ -282,6 +300,10 @@ export default function App() {
       {showDeclarations && <Declarations onClose={() => setShowDeclarations(false)} />}
 
       {showInvoicing && <Invoicing onClose={() => setShowInvoicing(false)} />}
+
+      {showEmployees && <Employees onClose={() => setShowEmployees(false)} />}
+
+      {showExtraWork && <ExtraWork onClose={() => setShowExtraWork(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule

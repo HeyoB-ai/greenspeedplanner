@@ -51,6 +51,9 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `026_invoice_lines_fixes.sql` | `invoice_lines()`: reden-opbouw (`::TEXT`, zie hieronder), en een regel zonder duur krijgt geen bedrag in plaats van nul |
 | `027_declaration_compute_cast.sql` | dezelfde `::TEXT` op de drie vaste zinnen in `declaration_compute()`; alleen een cast, geen gedragswijziging |
 | `028_declaration_expenses.sql` | onkosten bij een declaratie (`declaration_expenses`), doorbelast in `invoice_lines()`; `declaration_by_token()` en `declaration_overview()` krijgen de posten erbij |
+| `029_employees.sql` | personeelsadministratie los van `auth.users`: `employees`, `employee_active_on()`, import, en de overname van de bestaande koeriers |
+| `030_rate_per_transport.sql` | vier uurtarieven per apotheek (fiets, auto, instelling, overig); `invoice_lines()` kiest op diensttype en vervoermiddel |
+| `031_extra_work.sql` | meerwerk: `extra_work`, de vrijgave door de planner, de goedkeuringslus met de apotheek, en `pharmacies.billing_email` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -77,6 +80,9 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `026_invoice_lines_fixes_test.sql` | dat een vaste zin als reden terugkomt, dat een dienst zonder duur zichtbaar blijft zonder bedrag, en dat een regel zonder totaal geen losse bedragen houdt |
 | `027_declaration_compute_cast_test.sql` | de drie takken met een vaste zin (geen standplaats, onbekende afstand, dienst zonder apotheek) geven een reden terug, met ongewijzigde uitkomsten |
 | `028_declaration_expenses_test.sql` | posten vastleggen (lege regels vallen weg), terugzien op de invulpagina en in het plannerscherm, naar rato doorbelast, en dicht na goedkeuring |
+| `029_employees_test.sql` | medewerker zonder inlogaccount, uit dienst als datum (en actief op een oude datum), import die bijwerkt in plaats van dupliceert, geen personeelsnummer, en dat een losgemaakt profiel de medewerker laat staan |
+| `030_rate_per_transport_test.sql` | het juiste tarief per diensttype en vervoermiddel, spoed ongewijzigd, een onbekend vervoermiddel zonder bedrag maar mét reden, en een starttarief van 0 als geldige waarde |
+| `031_extra_work_test.sql` | drempel, verdeling over twee apotheken, vrijgave (met en zonder adres), token en antwoord, en de drie factuuruitkomsten — plus dat de declaratie van de koerier nergens door verandert |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -295,6 +301,47 @@ hooguit onvolledig. Zie punt 10 van het ontwerp.
 | `schedule_cancelled` | Je vaste dienst vervalt | nog niet in gebruik; staat er zodat een onbekend feit geen lege mail oplevert |
 | `shift_followup` | Hoe lang duurde je dienst van \<dag\> \<datum\>? | de invullink van de nadeclaratie (fase 6); bij een eigen auto ook de vraag om de totaal gereden kilometers |
 
+## Medewerkers (fase 8) — migratie nog niet gedraaid
+
+Het ontwerp met alle afwegingen staat in
+[`docs/FASE8_PERSONEEL_ONTWERP.md`](docs/FASE8_PERSONEEL_ONTWERP.md).
+
+`employees` is de personeelsadministratie, **los van `auth.users`**. Reden:
+`user_profiles.id` heeft een foreign key naar `auth.users(id)` met
+`ON DELETE CASCADE`. Daardoor kan er geen medewerker bestaan zonder inlogaccount,
+en sleept een verwijderd account het profiel mee — met de urenhistorie eraan, die
+zeven jaar bewaard moet blijven.
+
+`employees.user_profile_id` staat daarom op **`ON DELETE SET NULL`**: verdwijnt
+het account, dan verliest de medewerker zijn inlog, niet zijn historie.
+
+**Uit dienst is een datum, geen vinkje.** `employed_until` in het verleden =
+verdwenen uit de keuzelijsten, maar een urenexport over maart bevat hem gewoon.
+Die logica staat op één plek: `employee_active_on(employee_id, date)` en de view
+`employees_active`.
+
+### Importeren
+
+*Medewerkers → CSV importeren.* Een kopregel met onder meer `Personeelsnummer`,
+`Voornaam`, `Achternaam`, `E-mail`, `Telefoon`, `Dienstverband`, `Uurloon`,
+`In dienst` en `Uit dienst`; komma's en puntkomma's mogen allebei. Er wordt
+gekoppeld op personeelsnummer en anders op naam, dus **dezelfde lijst opnieuw
+draaien werkt bij** in plaats van te dupliceren. Een lege kolom overschrijft
+niets. Zonder personeelsnummer wordt iemand gewoon aangemaakt, met een markering
+bovenaan de lijst.
+
+Na afloop toont het scherm per rij wat ermee gebeurd is — "69 verwerkt" zegt
+niets als er drie zijn overgeslagen.
+
+### ⚠ Twee besluiten staan open
+
+1. **Waar wijst een dienst naar?** `shifts.courier_id` verwijst naar
+   `user_profiles`, dus je kunt nog géén dienst inplannen voor iemand zonder
+   account. Drie varianten met hun gevolgen staan in punt 4 van het ontwerp, met
+   een aanbeveling. `shifts` is in deze migratie **niet** aangeraakt.
+2. **De regiolaag.** Conclusie: een eigen laag, niet `groups` — die gaat over
+   ketens. Punt 3 van het ontwerp. Ook niet gebouwd.
+
 ## Het weekoverzicht
 
 Twee weergaven, te wisselen met de schakelaar linksboven:
@@ -326,6 +373,78 @@ twee plaatsen in het overzicht. Een foute groepering is erger dan geen
 groepering, want die eerste ziet niemand. Het invoerveld biedt de al gebruikte
 plaatsen als suggestie aan, zodat er niet per ongeluk twee schrijfwijzen ontstaan.
 
+## Meerwerk (fase 9) — migraties nog niet gedraaid
+
+Loopt een dienst uit, dan mag de apotheek daar eerst iets van vinden voordat het
+doorbelast wordt. Het ontwerp staat in de kop van
+[`supabase/migrations/031_extra_work.sql`](supabase/migrations/031_extra_work.sql).
+
+```
+dienst loopt af → koerier vult in → uitloop >= drempel → melding klaar
+    → PLANNER GEEFT VRIJ → mail naar de apotheek → 48 uur → akkoord of niet
+```
+
+**De planner zit er bewust tussen.** De toelichting van de koerier gaat mee naar
+de klant, en "moest wachten want de assistente was er niet" is niet iets wat je
+ongelezen doorstuurt. De sweep maakt daarom wél de melding maar géén mail; er is
+geen pad waarlangs er iets naar een apotheek vertrekt zonder dat iemand op
+*Vrijgeven* heeft geklikt. In het scherm *Meerwerk* staat de tekst die de klant
+te lezen krijgt bewerkbaar klaar, voorgevuld met wat de koerier schreef.
+
+| Uitkomst | Op de factuur |
+|---|---|
+| `approved` | de volle uren |
+| `expired` (geen reactie binnen 48 uur) | ook de volle uren, maar **apart herkenbaar** |
+| `disputed` | alleen de geplande uren; de uitloop blijft eraf tot er telefonisch iets is afgesproken |
+| nog niet vrijgegeven / nog geen antwoord | idem: alleen de geplande uren |
+
+Dat laatste is de conservatieve kant: te weinig factureren corrigeer je met een
+telefoontje, te veel kost vertrouwen. `billed_minutes` blijft wél tonen wat er
+werkelijk gewerkt is.
+
+> **De koerier wordt in álle gevallen gewoon uitbetaald.** Een geschil met de
+> klant is een geschil tussen Greenspeed en de apotheek; dat mag niet doorwerken
+> in het loon van iemand die de uren heeft gemaakt. Er is daarom geen enkele
+> verwijzing vanuit de nadeclaratieketen naar de meerwerkstatus, en
+> `declaration_compute()` is niet aangeraakt.
+
+Drempel en termijn staan in `invoice_settings`, niet in code:
+
+```sql
+UPDATE public.invoice_settings
+   SET extra_work_threshold_minutes = 15, extra_work_respond_hours = 48;
+```
+
+### Wat je eerst moet vullen
+
+**Een e-mailadres per apotheek** (*Apotheken*). Zonder adres kan een melding niet
+vrijgegeven worden; het scherm *Meerwerk* zegt dan welke apotheken het betreft.
+
+### Uitrollen
+
+```powershell
+npx supabase secrets set EXTRA_WORK_URL=https://<app>/meerwerk
+npx supabase functions deploy extra-work
+npx supabase functions deploy send-shift-mail    # tweede ronde voor apotheekpost
+```
+
+De verzender heeft er een tweede ronde bij gekregen: post zonder `courier_id`
+gaat naar het adres in `recipient_override`. Voor de keten van fase 5 verandert
+er niets — `mail_pending_couriers()` joint op `user_profiles` en ziet die rijen
+niet eens.
+
+De cron voor `extra_work_sweep()`:
+
+```sql
+SELECT cron.schedule('extra-work-sweep', '30 * * * *', $$
+  SELECT public.extra_work_sweep();
+$$);
+```
+
+> ⚠ De `Authorization`-header luidt `'Bearer ' || <sleutel>` — het woord
+> `Bearer`, een spatie, dán de sleutel. Controleren doe je in
+> `net._http_response`, niet in `cron.job_run_details`.
+
 ## Facturatie (fase 7) — migratie nog niet gedraaid
 
 Het ontwerp met alle redenen staat in
@@ -347,10 +466,16 @@ Spoed       alleen het telefonisch afgesproken bedrag; geen uren, geen starttari
 
 ### Wat je moet invullen voordat het klopt
 
-1. **Tarieven per apotheek** — *Apotheken → Tarieven*. Er worden er bewust geen
-   voorgevuld: anders dan bij de kilometervergoeding is er geen landelijk getal om
-   op terug te vallen, en een verzonnen tarief merk je pas als de factuur weg is.
-   Zonder tarief blijft elke regel van die apotheek zonder bedrag én gemarkeerd.
+1. **Tarieven per apotheek** — *Apotheken → Tarieven*. Sinds migratie 030 zijn
+   dat er vier: **fiets**, **auto**, **instelling** en **overig transport**
+   (klussen). Welk tarief geldt hangt af van het diensttype, en bij een reguliere
+   dienst van het vervoermiddel; spoed rekent alleen het afgesproken bedrag.
+   Een leeg tariefveld betekent *geen tarief voor dat soort werk* — een dienst van
+   die soort levert dan een onvolledige factuurregel op in plaats van een nul.
+   Het **starttarief** staat daar los van en wordt niet verdeeld; bij
+   BENU-filialen staat er 0 in, en dat is een waarde en geen uitzondering.
+   Er worden er bewust geen voorgevuld: er is geen landelijk getal om op terug te
+   vallen, en een verzonnen tarief merk je pas als de factuur weg is.
 2. **Geplande minuten per apotheek** — in *Dienst toevoegen* / *Dienst bewerken*,
    per aangevinkte apotheek. Alleen nodig bij gedeelde diensten; ontbreekt het,
    dan wordt gelijk verdeeld en de regel gemarkeerd.

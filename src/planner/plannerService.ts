@@ -15,13 +15,14 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
   const sb = requireClient();
   const { data, error } = await sb
     .from('pharmacies')
-    .select('id, name, city')
+    .select('id, name, city, billing_email')
     .order('name', { ascending: true });
   if (error) throw error;
   return (data ?? []).map((r: any): Pharmacy => ({
     id: r.id,
     name: r.name,
     city: r.city ?? null,
+    billingEmail: r.billing_email ?? null,
   }));
 }
 
@@ -29,6 +30,18 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
 // SECURITY DEFINER-functie: pharmacies is een gedeelde productietabel en krijgt
 // geen schrijfrechten voor de planner, want die zouden meteen voor élke kolom
 // gelden. Leeg opslaan wist het veld.
+// Adres voor meerwerkmeldingen (migratie 031). Zelfde weg als de plaatsnaam:
+// pharmacies krijgt geen schrijfrechten, want die zouden voor élke kolom gelden.
+export async function setPharmacyBillingEmail(
+  pharmacyId: string, email: string | null,
+): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.rpc('set_pharmacy_billing_email', {
+    p_pharmacy_id: pharmacyId, p_email: email,
+  });
+  if (error) throw error;
+}
+
 export async function setPharmacyCity(pharmacyId: string, city: string | null): Promise<void> {
   const sb = requireClient();
   const { error } = await sb.rpc('set_pharmacy_city', {

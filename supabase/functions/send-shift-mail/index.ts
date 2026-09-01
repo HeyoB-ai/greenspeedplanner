@@ -39,6 +39,11 @@ const MAX_PER_RUN      = Number(Deno.env.get('MAIL_MAX_PER_RUN') ?? '25');
 // een mail met een kapotte link is erger dan een mail die nog niet ging.
 const DECLARATION_URL  = Deno.env.get('DECLARATION_URL') ?? '';
 
+// Waar de meerwerkpagina voor apotheken staat (fase 9). Zelfde afweging als
+// hierboven: zonder deze instelling gaat er geen bericht uit met een kapotte
+// link, maar blijft het wachten.
+const EXTRA_WORK_URL   = Deno.env.get('EXTRA_WORK_URL') ?? '';
+
 // ── De poort: fail-closed ────────────────────────────────────────────────
 // Bij de SMS zat de bescherming in de data: alleen ingevoerde nummers konden
 // bereikt worden, en die voerde de planner zelf in. Bij mail heeft élke koerier
@@ -99,6 +104,14 @@ interface OutboxRow {
     // alleen bij een nabericht (shift_followup)
     declaration_id?: string;
     own_car?: boolean;
+    // alleen bij een meerwerkmelding (extra_work_request)
+    extra_work_id?: string;
+    pharmacy_name?: string;
+    planned_start?: string;
+    planned_end?: string;
+    extra_minutes?: number;
+    respond_hours?: number;
+    note?: string;
   };
   created_at: string;
   // Geen kolom maar een werkveld: de invullink wordt vlak vóór het renderen
@@ -261,6 +274,23 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
       }
       return lines;
     }
+    case 'extra_work_request': {
+      // Zonder werkende link heeft dit blok geen zin; het bericht blijft dan
+      // wachten in plaats van half uit te gaan.
+      if (!row.link || !p.shift_date) return [];
+      const when = `${dayName(p.weekday ?? 1)} ${fmtDate(p.shift_date)}`;
+      const planned = p.planned_start && p.planned_end
+        ? ` (gepland ${p.planned_start}-${p.planned_end})` : '';
+      const minutes = Math.round(Number(p.extra_minutes ?? 0));
+      const lines = [
+        `De dienst van ${when}${planned} duurde ${minutes} minuten langer dan gepland.`,
+      ];
+      if (p.note) lines.push(`Toelichting: ${p.note}`);
+      lines.push('Ga je akkoord met het doorbelasten van die extra tijd?');
+      lines.push(row.link);
+      lines.push(`Zonder reactie binnen ${p.respond_hours ?? 48} uur belasten we de extra tijd door.`);
+      return lines;
+    }
     default:
       return [];
   }
@@ -269,9 +299,9 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
 function subjectFor(rows: OutboxRow[]): string {
   if (rows.length > 1) {
     // Een bundel die alléén uit naberichten bestaat gaat niet over de planning.
-    return rows.every((r) => r.kind === 'shift_followup')
-      ? 'Hoe lang duurden je diensten?'
-      : 'Je planning is bijgewerkt';
+    if (rows.every((r) => r.kind === 'shift_followup')) return 'Hoe lang duurden je diensten?';
+    if (rows.every((r) => r.kind === 'extra_work_request')) return 'Extra tijd — graag je akkoord';
+    return 'Je planning is bijgewerkt';
   }
   const row = rows[0];
   const p = row.payload;
@@ -291,6 +321,8 @@ function subjectFor(rows: OutboxRow[]): string {
       return when ? `Je dienst van ${when} vervalt` : 'Je dienst vervalt';
     case 'shift_followup':
       return when ? `Hoe lang duurde je dienst van ${when}?` : 'Hoe lang duurde je dienst?';
+    case 'extra_work_request':
+      return when ? `Extra tijd op ${when} — graag je akkoord` : 'Extra tijd — graag je akkoord';
     default:                   return 'Bericht over je planning';
   }
 }
@@ -304,7 +336,10 @@ function subjectFor(rows: OutboxRow[]): string {
 // is deze mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
 // en het is de enige manier om ook het rommelige geval te dekken waarin twee
 // tijden door elkaar heen lopen.
-function renderMail(rows: OutboxRow[], courierName: string, expectedHours: number | null): { subject: string; text: string } | null {
+function renderMail(
+  rows: OutboxRow[], name: string, expectedHours: number | null,
+  audience: 'courier' | 'pharmacy' = 'courier',
+): { subject: string; text: string } | null {
   const blocks = rows
     .slice()
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
@@ -314,9 +349,19 @@ function renderMail(rows: OutboxRow[], courierName: string, expectedHours: numbe
   if (blocks.length === 0) return null;
 
   const body = blocks.map((b) => b.join('\n')).join('\n\n');
+  // Een apotheek is geen koerier: andere aanhef, en de afsluiting gaat niet
+  // over verhinderd zijn maar over de vraag die er ligt.
+  if (audience === 'pharmacy') {
+    return {
+      subject: subjectFor(rows),
+      text: `Beste ${name},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
+          + `Vragen? Bel of mail de planning.\n`,
+    };
+  }
+
   return {
     subject: subjectFor(rows),
-    text: `Hoi ${courierName},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
+    text: `Hoi ${name},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
         + `Vragen of verhinderd? Bel de planning.\n`,
   };
 }
@@ -405,6 +450,16 @@ Deno.serve(async (req) => {
   const expectedHours: number | null = expHourErr ? null : (Number(expectedRaw) || null);
   if (expHourErr) console.error('[mail] termijn ophalen mislukt:', expHourErr.message);
 
+  // Meerwerk waar de apotheek niet binnen de termijn op gereageerd heeft. Dit
+  // hoort bij het verzendmoment: de klok loopt vanaf het versturen, dus de
+  // verzender is de plek die weet wanneer hij is afgelopen.
+  const { data: expiredWork, error: xwErr } = await admin.rpc('extra_work_expire');
+  if (xwErr) {
+    console.error('[mail] meerwerk verlopen bijwerken mislukt:', xwErr.message);
+  } else if ((expiredWork ?? 0) > 0) {
+    console.warn(`${expiredWork} meerwerkmelding(en) verlopen zonder reactie.`);
+  }
+
   const { data: pending, error: pendErr } = await admin.rpc('mail_pending_couriers');
   if (pendErr) {
     console.error('[mail] mail_pending_couriers mislukt:', pendErr.message);
@@ -475,7 +530,7 @@ Deno.serve(async (req) => {
     //     een eerdere link ongeldig — dat kan, want een nabericht gaat één keer
     //     per dienst uit.
     for (const r of rows) {
-      if (r.kind !== 'shift_followup') continue;
+      if (r.kind !== 'shift_followup') continue;   // meerwerk gaat langs de directe lus
       const decId = r.payload?.declaration_id;
       if (!decId) continue;
 
@@ -575,6 +630,123 @@ Deno.serve(async (req) => {
       console.error(`[mail] versturen mislukt voor ${c.courier_name}:`, outcome.error);
     }
     results.push({ courier: courierName, to: address, items: rows.length, ok: outcome.ok, error: outcome.error });
+  }
+
+  // ══ Tweede ronde: post die niet naar een koerier gaat ═══════════════════
+  //    Meerwerkmeldingen gaan naar een apotheek (fase 9). Die hebben geen
+  //    courier_id en dus geen adres in auth.users; het adres staat in de
+  //    outbox-rij zelf. Zelfde volgorde als hierboven: eerst de poort, dan pas
+  //    claimen, zodat een geblokkeerd bericht blijft wachten in plaats van als
+  //    mislukt te eindigen.
+  const { data: direct, error: dirErr } = await admin.rpc('mail_pending_direct');
+  if (dirErr) console.error('[mail] mail_pending_direct mislukt:', dirErr.message);
+
+  for (const d of ((direct ?? []) as Array<{ recipient: string; items: number }>)) {
+    const gate = gateFor(d.recipient);
+    if (!gate.send && !dryRun) {
+      console.log(`[mail] ${d.recipient}: ${gate.reason}, ${d.items} bericht(en) blijven wachten.`);
+      skipped++;
+      results.push({ to: d.recipient, skipped: gate.reason, items: d.items });
+      continue;
+    }
+
+    let rows: OutboxRow[];
+    if (dryRun) {
+      const { data } = await admin.from('mail_outbox').select('*')
+        .eq('recipient_override', d.recipient).is('courier_id', null).eq('status', 'pending');
+      rows = (data ?? []) as OutboxRow[];
+    } else {
+      const { data, error: claimErr } = await admin.rpc('mail_claim_direct', { p_recipient: d.recipient });
+      if (claimErr) {
+        console.error(`[mail] claim mislukt voor ${d.recipient}:`, claimErr.message);
+        failed++;
+        continue;
+      }
+      rows = (data ?? []) as OutboxRow[];
+    }
+    if (rows.length === 0) { skipped++; continue; }
+
+    // De link naar de meerwerkpagina. Het token wordt hier gemaakt, net als bij
+    // de nadeclaratie: in de database staat alleen de hash.
+    const stuck: string[] = [];
+    for (const r of rows) {
+      if (r.kind !== 'extra_work_request') continue;
+      const xwId = r.payload?.extra_work_id;
+      if (!xwId || !EXTRA_WORK_URL) {
+        if (!EXTRA_WORK_URL) console.error('[mail] EXTRA_WORK_URL ontbreekt — melding blijft wachten.');
+        stuck.push(r.id);
+        continue;
+      }
+      if (dryRun) {
+        r.link = `${EXTRA_WORK_URL}?t=<token wordt pas bij echt verzenden gemaakt>`;
+        continue;
+      }
+      const { data: tok, error: tokErr } = await admin.rpc('extra_work_issue_token', {
+        p_id: xwId,
+      });
+      const issued = Array.isArray(tok) ? tok[0] : tok;
+      if (tokErr || !issued?.token) {
+        console.error(`[mail] geen link voor meerwerk ${xwId}:`, tokErr?.message ?? 'geen token');
+        stuck.push(r.id);
+        continue;
+      }
+      r.link = `${EXTRA_WORK_URL}?t=${issued.token}`;
+    }
+
+    // Zonder link terug in de wachtrij, om dezelfde reden als bij de koeriers:
+    // de bundel krijgt één uitkomst, en een rij zonder inhoud zou als verstuurd
+    // eindigen terwijl er niets is uitgegaan.
+    if (stuck.length > 0) {
+      if (!dryRun) {
+        // mail_release en niet declaration_release: die laatste filtert op
+        // kind = 'shift_followup' en zou een meerwerkmelding op 'sending' laten
+        // staan.
+        const { error: relErr } = await admin.rpc('mail_release', { p_ids: stuck });
+        if (relErr) console.error('[mail] terugzetten mislukt:', relErr.message);
+      }
+      rows = rows.filter((r) => !stuck.includes(r.id));
+      if (rows.length === 0) { skipped++; continue; }
+    }
+
+    const toName = rows[0].payload?.pharmacy_name ?? d.recipient;
+    const mail = renderMail(rows, toName, expectedHours, 'pharmacy');
+    if (!mail) {
+      empty++;
+      if (!dryRun) {
+        await admin.rpc('mail_record_result', {
+          p_ids: rows.map((r) => r.id), p_ok: false, p_recipient: d.recipient,
+          p_error: 'geen inhoud om te versturen',
+        });
+      }
+      continue;
+    }
+
+    if (dryRun) {
+      results.push({
+        to: d.recipient, would_send: gate.send, blocked_by: gate.reason,
+        items: rows.length, kinds: rows.map((r) => r.kind),
+        subject: mail.subject, text: mail.text,
+      });
+      continue;
+    }
+
+    let outcome: { ok: boolean; id?: string; error?: string };
+    try {
+      outcome = await sendMail(d.recipient, toName, mail.subject, mail.text);
+    } catch (e) {
+      outcome = { ok: false, error: `Netwerkfout: ${e instanceof Error ? e.message : String(e)}` };
+    }
+
+    await admin.rpc('mail_record_result', {
+      p_ids: rows.map((r) => r.id),
+      p_ok: outcome.ok,
+      p_recipient: d.recipient,
+      p_message_id: outcome.id ?? null,
+      p_error: outcome.error ?? null,
+    });
+
+    if (outcome.ok) sent++; else failed++;
+    results.push({ to: d.recipient, items: rows.length, ok: outcome.ok, error: outcome.error });
   }
 
   const summary = {

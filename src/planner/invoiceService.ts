@@ -26,14 +26,18 @@ export async function getPharmacyRates(pharmacyId: string): Promise<PharmacyRate
   const sb = requireClient();
   const { data, error } = await sb
     .from('pharmacy_rates')
-    .select('id, pharmacy_id, hourly_rate, start_rate, effective_from, note')
+    .select('id, pharmacy_id, hourly_rate_bike, hourly_rate_car, '
+          + 'hourly_rate_institution, hourly_rate_other, start_rate, effective_from, note')
     .eq('pharmacy_id', pharmacyId)
     .order('effective_from', { ascending: false });
   if (error) throw error;
   return (data ?? []).map((r: any): PharmacyRate => ({
     id: r.id,
     pharmacyId: r.pharmacy_id,
-    hourlyRate: Number(r.hourly_rate),
+    hourlyRateBike: r.hourly_rate_bike != null ? Number(r.hourly_rate_bike) : null,
+    hourlyRateCar: r.hourly_rate_car != null ? Number(r.hourly_rate_car) : null,
+    hourlyRateInstitution: r.hourly_rate_institution != null ? Number(r.hourly_rate_institution) : null,
+    hourlyRateOther: r.hourly_rate_other != null ? Number(r.hourly_rate_other) : null,
     startRate: Number(r.start_rate),
     effectiveFrom: r.effective_from,
     note: r.note ?? null,
@@ -43,15 +47,25 @@ export async function getPharmacyRates(pharmacyId: string): Promise<PharmacyRate
 // Een tarief vastleggen. Dezelfde ingangsdatum opnieuw invoeren corrigeert die
 // rij; een nieuwe datum is een tariefwijziging en laat de oude staan — anders is
 // een oude factuur niet meer te herleiden.
+export interface RateInput {
+  bike: number | null;
+  car: number | null;
+  institution: number | null;
+  other: number | null;
+  startRate: number;
+}
+
 export async function setPharmacyRate(
-  pharmacyId: string, hourlyRate: number, startRate: number,
-  effectiveFrom: string, note: string | null,
+  pharmacyId: string, rates: RateInput, effectiveFrom: string, note: string | null,
 ): Promise<void> {
   const sb = requireClient();
   const { error } = await sb.rpc('set_pharmacy_rate', {
     p_pharmacy_id: pharmacyId,
-    p_hourly_rate: hourlyRate,
-    p_start_rate: startRate,
+    p_bike: rates.bike,
+    p_car: rates.car,
+    p_institution: rates.institution,
+    p_other: rates.other,
+    p_start_rate: rates.startRate,
     p_effective_from: effectiveFrom,
     p_note: note,
   });

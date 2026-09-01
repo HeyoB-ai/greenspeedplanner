@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Check, Euro, Info, Trash2, X } from 'lucide-react';
 import { Pharmacy, PharmacyRate } from '../types';
-import { getPharmacies, setPharmacyCity } from './plannerService';
+import { getPharmacies, setPharmacyBillingEmail, setPharmacyCity } from './plannerService';
 import { deletePharmacyRate, euro, getPharmacyRates, setPharmacyRate } from './invoiceService';
 
 interface Props {
@@ -32,7 +32,13 @@ export default function Pharmacies({ onClose }: Props) {
   // kort en twee open panelen naast elkaar leest niemand.
   const [openId, setOpenId] = useState<string | null>(null);
   const [rates, setRates] = useState<PharmacyRate[]>([]);
-  const [rateForm, setRateForm] = useState({ hourly: '', start: '', from: '', note: '' });
+  // Vier tarieven sinds migratie 030. Als tekst, zodat een leeg veld ook echt
+  // leeg blijft: geen tarief is iets anders dan een tarief van nul.
+  const [rateForm, setRateForm] = useState({
+    bike: '', car: '', institution: '', other: '', start: '', from: '', note: '',
+  });
+  // Adres voor meerwerkmeldingen (migratie 031).
+  const [mailDrafts, setMailDrafts] = useState<Record<string, string>>({});
 
   async function reload() {
     setLoading(true);
@@ -71,7 +77,10 @@ export default function Pharmacies({ onClose }: Props) {
     if (openId === id) { setOpenId(null); return; }
     setOpenId(id);
     setRates([]);
-    setRateForm({ hourly: '', start: '', from: new Date().toISOString().slice(0, 10), note: '' });
+    setRateForm({
+      bike: '', car: '', institution: '', other: '', start: '',
+      from: new Date().toISOString().slice(0, 10), note: '',
+    });
     setRowError((m) => ({ ...m, [id]: '' }));
     try {
       setRates(await getPharmacyRates(id));
@@ -80,17 +89,30 @@ export default function Pharmacies({ onClose }: Props) {
     }
   }
 
+  // Leeg veld → null: geen tarief voor dat soort werk. Dat is iets anders dan
+  // nul, en de factuurregel zegt het verschil ook.
+  function parseRate(raw: string): number | null | 'fout' {
+    const t = raw.trim();
+    if (t === '') return null;
+    const n = Number(t.replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 ? n : 'fout';
+  }
+
   async function saveRate(id: string) {
-    const hourly = Number(rateForm.hourly.replace(',', '.'));
-    const start = rateForm.start.trim() === '' ? 0 : Number(rateForm.start.replace(',', '.'));
     setRowError((m) => ({ ...m, [id]: '' }));
 
-    if (!Number.isFinite(hourly) || hourly < 0) {
-      setRowError((m) => ({ ...m, [id]: 'Vul een geldig uurtarief in.' }));
+    const bike = parseRate(rateForm.bike);
+    const car = parseRate(rateForm.car);
+    const institution = parseRate(rateForm.institution);
+    const other = parseRate(rateForm.other);
+    const start = parseRate(rateForm.start);
+
+    if ([bike, car, institution, other, start].includes('fout')) {
+      setRowError((m) => ({ ...m, [id]: 'Vul geldige bedragen in, of laat een veld leeg.' }));
       return;
     }
-    if (!Number.isFinite(start) || start < 0) {
-      setRowError((m) => ({ ...m, [id]: 'Vul een geldig starttarief in.' }));
+    if (bike === null && car === null && institution === null && other === null) {
+      setRowError((m) => ({ ...m, [id]: 'Vul minstens één uurtarief in.' }));
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(rateForm.from)) {
@@ -100,9 +122,34 @@ export default function Pharmacies({ onClose }: Props) {
 
     setBusyId(id);
     try {
-      await setPharmacyRate(id, hourly, start, rateForm.from, rateForm.note.trim() || null);
+      await setPharmacyRate(
+        id,
+        {
+          bike: bike as number | null,
+          car: car as number | null,
+          institution: institution as number | null,
+          other: other as number | null,
+          startRate: (start as number | null) ?? 0,
+        },
+        rateForm.from,
+        rateForm.note.trim() || null,
+      );
       setRates(await getPharmacyRates(id));
-      setRateForm((f) => ({ ...f, hourly: '', start: '', note: '' }));
+      setRateForm((f) => ({ ...f, bike: '', car: '', institution: '', other: '', start: '', note: '' }));
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [id]: e?.message ?? 'Opslaan mislukt.' }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveBillingEmail(id: string) {
+    setBusyId(id);
+    setRowError((m) => ({ ...m, [id]: '' }));
+    try {
+      await setPharmacyBillingEmail(id, (mailDrafts[id] ?? '').trim() || null);
+      setMailDrafts((m) => { const next = { ...m }; delete next[id]; return next; });
+      await reload();
     } catch (e: any) {
       setRowError((m) => ({ ...m, [id]: e?.message ?? 'Opslaan mislukt.' }));
     } finally {
@@ -153,7 +200,8 @@ export default function Pharmacies({ onClose }: Props) {
 
           <p className="text-sm text-slate-600">
             De plaats bepaalt de groepen in het weekoverzicht. Apotheken zonder plaats komen
-            onderaan in de groep <strong>Overig</strong>.
+            onderaan in de groep <strong>Overig</strong>. Het e-mailadres is waar meerwerkmeldingen
+            heen gaan; zonder adres kan zo'n melding niet vrijgegeven worden.
           </p>
 
           {!loading && missing.length > 0 && (
@@ -194,6 +242,21 @@ export default function Pharmacies({ onClose }: Props) {
                       onKeyDown={(e) => { if (e.key === 'Enter' && dirty) save(p.id); }}
                       className="w-48 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
                     />
+                    <input
+                      type="text"
+                      value={mailDrafts[p.id] ?? p.billingEmail ?? ''}
+                      placeholder="e-mail voor meerwerk"
+                      disabled={busy}
+                      onChange={(e) => setMailDrafts((m) => ({ ...m, [p.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveBillingEmail(p.id); }}
+                      onBlur={() => {
+                        if ((mailDrafts[p.id] ?? '').trim() !== (p.billingEmail ?? '')) saveBillingEmail(p.id);
+                      }}
+                      className={`w-56 border rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60 ${
+                        p.billingEmail ? 'border-slate-300' : 'border-amber-300'
+                      }`}
+                      title="Zonder adres kan een meerwerkmelding niet vrijgegeven worden"
+                    />
                     <button
                       onClick={() => openRates(p.id)} disabled={busy}
                       className="inline-flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 rounded-lg hover:border-slate-400 disabled:opacity-60 shrink-0"
@@ -228,8 +291,11 @@ export default function Pharmacies({ onClose }: Props) {
                           <thead>
                             <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                               <th className="font-medium pb-1">Vanaf</th>
-                              <th className="font-medium pb-1">Per uur</th>
-                              <th className="font-medium pb-1">Start</th>
+                              <th className="font-medium pb-1 text-right">Fiets</th>
+                              <th className="font-medium pb-1 text-right">Auto</th>
+                              <th className="font-medium pb-1 text-right">Instelling</th>
+                              <th className="font-medium pb-1 text-right">Overig</th>
+                              <th className="font-medium pb-1 text-right">Start</th>
                               <th className="font-medium pb-1"></th>
                             </tr>
                           </thead>
@@ -240,8 +306,11 @@ export default function Pharmacies({ onClose }: Props) {
                                   {r.effectiveFrom}
                                   {i === 0 && <span className="ml-1.5 text-xs text-green-700">huidig</span>}
                                 </td>
-                                <td className="py-1 tabular-nums">{euro(r.hourlyRate)}</td>
-                                <td className="py-1 tabular-nums">{euro(r.startRate)}</td>
+                                <td className="py-1 tabular-nums text-right whitespace-nowrap">{euro(r.hourlyRateBike)}</td>
+                                <td className="py-1 tabular-nums text-right whitespace-nowrap">{euro(r.hourlyRateCar)}</td>
+                                <td className="py-1 tabular-nums text-right whitespace-nowrap">{euro(r.hourlyRateInstitution)}</td>
+                                <td className="py-1 tabular-nums text-right whitespace-nowrap">{euro(r.hourlyRateOther)}</td>
+                                <td className="py-1 tabular-nums text-right whitespace-nowrap">{euro(r.startRate)}</td>
                                 <td className="py-1 text-right">
                                   <button
                                     onClick={() => removeRate(p.id, r.id)} disabled={busy}
@@ -263,15 +332,22 @@ export default function Pharmacies({ onClose }: Props) {
                       )}
 
                       <div className="flex flex-wrap items-end gap-2">
-                        <label className="text-xs text-slate-500">
-                          <span className="block mb-1">Per uur (€)</span>
-                          <input
-                            type="text" inputMode="decimal" value={rateForm.hourly} disabled={busy}
-                            onChange={(e) => setRateForm((f) => ({ ...f, hourly: e.target.value }))}
-                            placeholder="0,00"
-                            className="w-24 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums bg-white"
-                          />
-                        </label>
+                        {([
+                          ['bike', 'Fiets (€)'],
+                          ['car', 'Auto (€)'],
+                          ['institution', 'Instelling (€)'],
+                          ['other', 'Overig (€)'],
+                        ] as const).map(([key, label]) => (
+                          <label key={key} className="text-xs text-slate-500">
+                            <span className="block mb-1">{label}</span>
+                            <input
+                              type="text" inputMode="decimal" value={rateForm[key]} disabled={busy}
+                              onChange={(e) => setRateForm((f) => ({ ...f, [key]: e.target.value }))}
+                              placeholder="leeg = geen"
+                              className="w-24 border border-slate-300 rounded-lg px-2 py-1 text-sm tabular-nums bg-white"
+                            />
+                          </label>
+                        ))}
                         <label className="text-xs text-slate-500">
                           <span className="block mb-1">Starttarief (€)</span>
                           <input
@@ -300,7 +376,10 @@ export default function Pharmacies({ onClose }: Props) {
                       <p className="text-xs text-slate-400">
                         Een tariefwijziging is een nieuwe regel met een eigen ingangsdatum; de oude
                         blijft staan zodat een oude factuur herleidbaar blijft. Dezelfde datum opnieuw
-                        invoeren corrigeert die regel.
+                        invoeren corrigeert die regel. Een leeg tariefveld betekent <em>geen tarief
+                        voor dat soort werk</em> — een dienst van die soort levert dan een onvolledige
+                        factuurregel op in plaats van een nul. Een starttarief van 0 is wél een waarde
+                        (BENU-filialen).
                       </p>
                     </div>
                   )}

@@ -172,6 +172,15 @@ export default function Invoicing({ onClose }: Props) {
                         {l.incomplete && (
                           <div className="text-xs text-amber-700 mt-0.5 max-w-[20rem]">{l.reason}</div>
                         )}
+                        {/* Goedgekeurd en verlopen leveren allebei een regel op;
+                            alleen bij het tweede heeft nooit iemand gekeken, en
+                            dat is precies waar discussie uit voortkomt. */}
+                        {l.extra_work_status === 'approved' && (
+                          <div className="text-xs text-green-700 mt-0.5">meerwerk goedgekeurd</div>
+                        )}
+                        {l.extra_work_status === 'expired' && (
+                          <div className="text-xs text-slate-500 mt-0.5">meerwerk: geen reactie</div>
+                        )}
                       </td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">
                         {hoursText(l.planned_minutes)}
