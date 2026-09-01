@@ -2,7 +2,7 @@
 -- Greenspeed Planner — zzp'ers krijgen geen kilometervergoeding — 035
 -- ════════════════════════════════════════════════════════════════════════
 -- Uitvoeren in de Supabase SQL Editor van de gedeelde Greenspeed-database.
--- Draai migratie 029 eerst: employees.employment_type is hier de bron.
+-- Deze migratie staat op zichzelf: migratie 029 (employees) is NIET nodig.
 --
 -- ┌─ DRY-RUN EERST ────────────────────────────────────────────────────────┐
 -- │ Dit bestand staat binnen een transactie (BEGIN … COMMIT). Vervang de   │
@@ -33,16 +33,31 @@
 --   markeringen te negeren.
 --
 -- WAAR 'ZZP' VANDAAN KOMT
---   employees.employment_type (migratie 029) is de bron; die is in het scherm
---   Medewerkers te onderhouden. Staat daar niets, dan valt de functie terug op
---   user_profiles.employmentType, gelezen via to_jsonb() — zie het kader in
---   migratie 028: die kolom is in deze repo niet te verifiëren en een
+--   Vandaag: user_profiles.employmentType, gelezen via to_jsonb() — zie het
+--   kader in migratie 028. Die kolom is in deze repo niet te verifiëren, en een
 --   rechtstreekse verwijzing zou de functie onaanmaakbaar maken als hij
 --   ontbreekt.
 --
---   Onbekend is GEEN zzp. Bij twijfel rekent de vierdelige regel gewoon door,
---   precies zoals vandaag — de vergoeding stilzwijgend laten vervallen zou een
---   koerier geld kosten zonder dat iemand het ziet.
+--   Straks: employees.employment_type (migratie 029), te onderhouden in het
+--   scherm Medewerkers. Die tabel bestaat nog niet — 029 is nooit gedraaid en
+--   er hangt nog een ontwerpvraag aan. Daarom staat die tak achter een
+--   to_regclass()-controle: hij doet niets zolang de tabel er niet is, en gaat
+--   vanzelf gelden zodra 029 gedraaid is. Zonder die constructie zou er ná 029
+--   nóg een migratie nodig zijn die niemand zich dan nog herinnert.
+--
+--   Een LANGUAGE sql-functie wordt bij het aanmaken al gecontroleerd op
+--   bestaande tabellen; die kan dus niet naar employees verwijzen. Vandaar
+--   plpgsql met EXECUTE.
+--
+-- ┌─ LET OP — MOGELIJK DOET DEZE MIGRATIE VOORLOPIG NIETS ─────────────────┐
+-- │ Bestaat user_profiles.employmentType niet (of staat hij overal leeg),   │
+-- │ dan geldt niemand als zzp'er en verandert er geen enkele berekening.    │
+-- │ Dat is geen fout maar de veilige kant: onbekend is GEEN zzp, want een   │
+-- │ vergoeding stilzwijgend laten vervallen kost een koerier geld zonder    │
+-- │ dat iemand het ziet. De eerste verificatiequery onderaan laat zien wie  │
+-- │ er nu als zzp'er geldt — staat daar niemand, dan wacht dit op 029 of op │
+-- │ het vullen van dat veld.                                               │
+-- └────────────────────────────────────────────────────────────────────────┘
 --
 -- WAT ER NIET VERANDERT
 --   De vier bestaande takken zijn letterlijk overgenomen uit migratie 027,
@@ -68,45 +83,76 @@ ALTER TABLE public.shift_declarations
 
 
 -- ────────────────────────────────────────────────────────────────────────
--- 2. declaration_is_contractor — is deze koerier zzp'er?
---    Eén plek waar die vraag beantwoord wordt, want hij wordt op drie plekken
---    gesteld: bij het rekenen, op de invulpagina en bij de bonverwachting.
+-- 2. De contractvorm — één plek waar die vraag beantwoord wordt, want hij
+--    wordt op drie plekken gesteld: bij het rekenen, op de invulpagina en bij
+--    de bonverwachting.
+--
+--    declaration_employment_type() levert de ruwe waarde: kleine letters,
+--    zonder spaties, en NULL als er niets bekend is. Leeg en onbekend zijn
+--    hier hetzelfde; dat scheelt overal een tweede vergelijking.
 -- ────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.declaration_employment_type(p_courier_id UUID)
+RETURNS TEXT
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_type TEXT;
+  v_emp  TEXT;
+BEGIN
+  -- De bron die er vandaag is. to_jsonb() omdat de kolom niet te verifiëren is:
+  -- bestaat hij niet, dan levert dit NULL in plaats van een functie die niet
+  -- aangemaakt kan worden. Zie het kader in migratie 028.
+  SELECT NULLIF(lower(btrim(to_jsonb(up) ->> 'employmentType')), '')
+    INTO v_type
+  FROM public.user_profiles up
+  WHERE up.id = p_courier_id;
+
+  -- Bestaat employees (migratie 029) al, dan wint wat daar staat: dat is de
+  -- lijst die in het scherm Medewerkers onderhouden wordt. to_regclass geeft
+  -- NULL zolang de tabel er niet is, en dan blijft dit blok ongebruikt.
+  -- Dynamisch, want een verwijzing naar een niet-bestaande tabel maakt zelfs
+  -- een plpgsql-functie onbruikbaar zodra hij hier langskomt.
+  IF to_regclass('public.employees') IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT NULLIF(lower(btrim(e.employment_type)), '')
+      FROM public.employees e
+      WHERE e.user_profile_id = $1
+      LIMIT 1
+    $q$ INTO v_emp USING p_courier_id;
+
+    -- Alleen overschrijven als er werkelijk iets staat: een medewerker zonder
+    -- ingevulde contractvorm hoort het profielveld niet te wissen.
+    IF v_emp IS NOT NULL THEN
+      v_type := v_emp;
+    END IF;
+  END IF;
+
+  RETURN v_type;
+END;
+$fn$;
+
+COMMENT ON FUNCTION public.declaration_employment_type(UUID) IS
+  'Contractvorm van een koerier (migratie 035). Bron: '
+  'user_profiles.employmentType, overschreven door employees.employment_type '
+  'zodra migratie 029 gedraaid is. NULL = onbekend.';
+
+-- Zzp of niet. Onbekend telt als niet-zzp: dan blijft de vierdelige regel
+-- gelden, want een vergoeding stilzwijgend laten vervallen kost een koerier
+-- geld zonder dat iemand het ziet.
 CREATE OR REPLACE FUNCTION public.declaration_is_contractor(p_courier_id UUID)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
-  SELECT COALESCE(
-           lower(btrim(COALESCE(
-             e.employment_type,                        -- migratie 029, onderhouden
-             to_jsonb(up) ->> 'employmentType'         -- terugval, zie de kop
-           ))) = 'zzp',
-           false)                                      -- onbekend is geen zzp
-  FROM public.user_profiles up
-  LEFT JOIN public.employees e ON e.user_profile_id = up.id
-  WHERE up.id = p_courier_id;
+  SELECT COALESCE(public.declaration_employment_type(p_courier_id) = 'zzp', false);
 $fn$;
 
-COMMENT ON FUNCTION public.declaration_is_contractor(UUID) IS
-  'Zzp of niet, voor de reiskostenregel (migratie 035). Bron: '
-  'employees.employment_type, met terugval op user_profiles.employmentType. '
-  'Onbekend telt als niet-zzp: dan blijft de vierdelige regel gelden.';
-
--- Dezelfde bron voor de bonverwachting. Die keek alleen naar het profielveld en
--- miste dus iedereen die pas in Medewerkers is vastgelegd. De regel zelf blijft
--- gelijk, inclusief "onbekend → geen markering" uit migratie 028: liever geen
--- markering dan bij iedereen één.
+-- Dezelfde bron voor de bonverwachting, zodat er maar één plek is waar de
+-- contractvorm vandaan komt. De regel zelf blijft gelijk aan migratie 028,
+-- inclusief "onbekend → geen markering": liever geen markering dan bij
+-- iedereen één. Let op het verschil met de functie hierboven — daar is
+-- onbekend hetzelfde als loondienst, hier juist niet.
 CREATE OR REPLACE FUNCTION public.declaration_expects_receipt(p_courier_id UUID)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
-  SELECT COALESCE(
-           lower(btrim(COALESCE(
-             e.employment_type,
-             to_jsonb(up) ->> 'employmentType'
-           ))) NOT IN ('zzp', ''),
-           false)
-  FROM public.user_profiles up
-  LEFT JOIN public.employees e ON e.user_profile_id = up.id
-  WHERE up.id = p_courier_id;
+  SELECT COALESCE(public.declaration_employment_type(p_courier_id) <> 'zzp', false);
 $fn$;
 
 
@@ -397,10 +443,14 @@ END $$;
 --   3. Het geval waar het om begon: kilometers als onkostenpost naast een
 --      berekende vergoeding. Verwacht: geen rijen meer bij zzp'ers.
 -- ────────────────────────────────────────────────────────────────────────
-SELECT up.name, public.declaration_is_contractor(up.id) AS zzp
+SELECT up.name,
+       public.declaration_employment_type(up.id) AS contractvorm,
+       public.declaration_is_contractor(up.id)   AS zzp
 FROM public.user_profiles up
 WHERE up.role = 'courier'
-ORDER BY 2 DESC, 1;
+ORDER BY 3 DESC, 1;
+-- Staat contractvorm overal op NULL, dan is er nog niets te herkennen: de
+-- kolom employmentType ontbreekt of is leeg, en employees bestaat nog niet.
 
 SELECT count(*) AS zzp_met_bedrag_of_markering
 FROM public.shift_declarations

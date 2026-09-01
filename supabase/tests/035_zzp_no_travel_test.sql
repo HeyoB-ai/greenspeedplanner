@@ -16,6 +16,12 @@
 -- afstand, drempel 10 km. Eigen tarieven, zodat de test niet afhangt van wat er
 -- in reimbursement_rates staat.
 --
+-- De contractvorm wordt gezet waar hij te zetten is: in employees zodra
+-- migratie 029 gedraaid is, anders in user_profiles.employmentType. Bestaat
+-- geen van beide, dan stopt de test met een leesbare opzetfout — dan is er in
+-- deze database namelijk niets om een zzp'er aan te herkennen, en dat is iets
+-- om te weten in plaats van omheen te testen.
+--
 -- WAT DE TEST DEKT
 --   1. Loondienst              → de vierdelige regel is onveranderd (25 − 10)
 --   2. Dezelfde dienst als zzp → rule 'zzp', geen km, geen tarief
@@ -28,11 +34,42 @@
 
 BEGIN;
 
+-- Zet de contractvorm op de plek die er in deze database is, en meld welke dat
+-- was. Dynamisch, want beide bronnen kunnen ontbreken: employees bestaat pas na
+-- migratie 029, en employmentType is een kolom van de bezorg-app die hier niet
+-- te verifiëren is.
+CREATE OR REPLACE FUNCTION public.test_035_set_employment(p_courier UUID, p_type TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql AS $helper$
+DECLARE v_has BOOLEAN;
+BEGIN
+  IF to_regclass('public.employees') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO public.employees (first_name, last_name, employment_type, user_profile_id)
+      VALUES ('Test', 'Koerier 035', $1, $2)
+      ON CONFLICT (user_profile_id) DO UPDATE SET employment_type = EXCLUDED.employment_type
+    $q$ USING p_type, p_courier;
+    RETURN 'employees';
+  END IF;
+
+  SELECT to_jsonb(up) ? 'employmentType' INTO v_has
+  FROM public.user_profiles up WHERE up.id = p_courier;
+
+  IF v_has THEN
+    EXECUTE 'UPDATE public.user_profiles SET "employmentType" = $1 WHERE id = $2'
+      USING p_type, p_courier;
+    RETURN 'user_profiles';
+  END IF;
+
+  RAISE EXCEPTION 'OPZET: er is geen plek om een contractvorm vast te leggen — employees bestaat niet (migratie 029) en user_profiles heeft geen kolom employmentType. Zolang dat zo is, herkent declaration_is_contractor() niemand als zzp''er en doet migratie 035 niets.';
+END;
+$helper$;
+
 DO $$
 DECLARE
   v_planner UUID;
   v_courier UUID;
-  v_emp     UUID;
+  v_via     TEXT;
   v_home    TEXT;
   v_other   TEXT;
   v_day     DATE := current_date - 3;
@@ -75,12 +112,8 @@ BEGIN
   DELETE FROM public.courier_distances
    WHERE courier_id = v_courier AND pharmacy_id = v_other;
 
-  -- De contractvorm komt uit employees (migratie 029) en overstemt het
-  -- profielveld, dus de test hangt niet af van wat daar toevallig staat.
-  INSERT INTO public.employees (first_name, last_name, employment_type, user_profile_id)
-  VALUES ('Test', 'Koerier 035', 'loondienst', v_courier)
-  ON CONFLICT (user_profile_id) DO UPDATE SET employment_type = 'loondienst'
-  RETURNING id INTO v_emp;
+  v_via := public.test_035_set_employment(v_courier, 'loondienst');
+  RAISE NOTICE 'Contractvorm wordt vastgelegd in %.', v_via;
 
   -- ══ GEVAL 1: loondienst — de bestaande regel ════════════════════════
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
@@ -98,7 +131,7 @@ BEGIN
   RAISE NOTICE 'GEVAL 1 geslaagd: bij loondienst verandert er niets.';
 
   -- ══ GEVAL 2: dezelfde dienst, nu als zzp'er ═════════════════════════
-  UPDATE public.employees SET employment_type = 'zzp' WHERE id = v_emp;
+  PERFORM public.test_035_set_employment(v_courier, 'zzp');
 
   SELECT * INTO v_c FROM public.declaration_compute(v_shift);
   IF v_c.rule <> 'zzp' THEN

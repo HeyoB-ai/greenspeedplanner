@@ -710,10 +710,29 @@ Drie dingen om te weten:
   tot dat punt verzameld zijn ("geen tarief", "geen afstand bekend") worden
   gewist. Een markering op een regel die klopt leert de planner om markeringen te
   negeren.
-* **Onbekend is geen zzp.** De bron is `employees.employment_type` (*Medewerkers*
-  in de kop van de app), met terugval op `user_profiles.employmentType`. Staat er
-  niets, dan rekent de vierdelige regel gewoon door — de vergoeding stilzwijgend
-  laten vervallen zou een koerier geld kosten zonder dat iemand het ziet.
+* **Onbekend is geen zzp.** Staat er niets vast, dan rekent de vierdelige regel
+  gewoon door — de vergoeding stilzwijgend laten vervallen zou een koerier geld
+  kosten zonder dat iemand het ziet.
+
+De bron zit in `declaration_employment_type()`:
+
+| | |
+|---|---|
+| vandaag | `user_profiles.employmentType`, gelezen via `to_jsonb()` |
+| zodra migratie 029 gedraaid is | `employees.employment_type` (*Medewerkers* in de kop van de app), die het profielveld overstemt |
+
+Die tweede tak staat achter een `to_regclass()`-controle en doet niets zolang
+`employees` niet bestaat; migratie 035 heeft 029 dus **niet** nodig en gaat er
+vanzelf gebruik van maken zodra 029 er is. Zonder die constructie zou er ná 029
+nóg een migratie nodig zijn die niemand zich dan nog herinnert. Het is de reden
+dat de functie plpgsql is: een `LANGUAGE sql`-functie wordt bij het aanmaken al
+op bestaande tabellen gecontroleerd en kan dus niet naar `employees` verwijzen.
+
+> ⚠ **Mogelijk doet deze migratie voorlopig niets.** Bestaat
+> `user_profiles.employmentType` niet, of staat hij overal leeg, dan geldt er
+> niemand als zzp'er en verandert er geen enkele berekening. De eerste
+> verificatiequery van 035 laat zien wie er nu als zzp'er telt; staat daar
+> niemand, dan wacht dit op migratie 029 of op het vullen van dat veld.
 
 Op de invulpagina verdwijnt bij een zzp'er de reiskostenvraag helemaal, en het
 onkostenblok zegt het tegenovergestelde van wat het bij loondienst zegt:
