@@ -55,6 +55,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `030_rate_per_transport.sql` | vier uurtarieven per apotheek (fiets, auto, instelling, overig); `invoice_lines()` kiest op diensttype en vervoermiddel |
 | `031_extra_work.sql` | meerwerk: `extra_work`, de vrijgave door de planner, de goedkeuringslus met de apotheek, en `pharmacies.billing_email` |
 | `032_chain_split.sql` | factuursplitsing keten/filiaal, per keten in te schakelen: gebudgetteerde uren naar het centrale adres, meerwerk naar het filiaal |
+| `033_planner_attention.sql` | `planner_attention()`: telt wat op de planner wacht, voor de badge op het menu Financieel |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -85,6 +86,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `030_rate_per_transport_test.sql` | het juiste tarief per diensttype en vervoermiddel, spoed ongewijzigd, een onbekend vervoermiddel zonder bedrag maar mét reden, en een starttarief van 0 als geldige waarde |
 | `031_extra_work_test.sql` | drempel, verdeling over twee apotheken, vrijgave (met en zonder adres), token en antwoord, en de drie factuuruitkomsten — plus dat de declaratie van de koerier nergens door verandert |
 | `032_chain_split_test.sql` | splitsing uit én aan, het gereserveerde blok bij korter werken, meerwerk/reiskosten/onkosten/spoed naar het filiaal, en dat keten + filiaal optelt tot het regeltotaal |
+| `033_planner_attention_test.sql` | wat wel en niet meetelt (ingediend wel, openstaand niet; nieuw wel, vrijgegeven niet), het totaal, en dat een koerier nullen krijgt |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -343,6 +345,68 @@ niets als er drie zijn overgeslagen.
    een aanbeveling. `shifts` is in deze migratie **niet** aangeraakt.
 2. **De regiolaag.** Conclusie: een eigen laag, niet `groups` — die gaat over
    ketens. Punt 3 van het ontwerp. Ook niet gebouwd.
+
+## De menubalk
+
+Tien knoppen naast elkaar was er één te veel; de balk liep vol en alles woog
+even zwaar. De indeling nu:
+
+| In de balk | Waarom los |
+|---|---|
+| **Rooster bijwerken** | hoort bij het plannen, gebruik je terwijl je in het overzicht zit |
+| **Vernieuwen** | idem |
+
+| Menu | Bevat | Waarom bij elkaar |
+|---|---|---|
+| **Beheer** | Medewerkers, Apotheken, Afstanden, Nummers | stamgegevens; je raakt ze zelden aan en dan meestal doelgericht |
+| **Financieel** | Declaraties, Meerwerk, Facturatie | de maandelijkse ronde, in die volgorde: eerst wat de koerier opgaf, dan wat de apotheek moet goedkeuren, dan de factuur |
+
+Rechts staat het account, met **Uitloggen** eronder.
+
+### De telbadge op Financieel
+
+Wegstoppen achter een klik heeft een prijs: een ingediende declaratie of een
+nieuwe meerwerkmelding is dan niet meer te zien zonder te gaan kijken. Daarom
+staat er een teller op **Financieel**, en dezelfde getallen staan bij de
+onderdelen zelf zodra je uitklapt.
+
+Geteld wordt **alleen wat op de planner ligt te wachten**:
+
+| Telt mee | Telt niet mee | Waarom niet |
+|---|---|---|
+| declaratie `submitted` | declaratie `open` | daar wachten we op de koerier |
+| meerwerk `new` | meerwerk `released` | ligt bij de apotheek, 48 uur |
+| | meerwerk `expired` | zonder reactie gewoon factureerbaar |
+| | meerwerk `disputed` | afgehandeld door de klant; hoort niet in een werkvoorraad |
+
+Zou `open` meetellen, dan is de badge geen werkvoorraad meer maar een getal dat
+elke week oploopt en dat niemand nog leest. Betwist meerwerk is een grensgeval —
+het vraagt wél iets — maar het staat in het meerwerkscherm bovenaan en niet in
+deze teller.
+
+De telling zit in `planner_attention()` (migratie 033) en niet in de frontend:
+twee volledige overzichten ophalen om er twee getallen uit te tellen zou bij elke
+verversing alle declaraties over de lijn trekken. De functie is `SECURITY
+DEFINER` en leest twee dichte tabellen, dus staat `is_privileged()` in beide
+takken — een koerier krijgt nullen. Mislukt de aanroep, dan verdwijnt de badge in
+plaats van het scherm te breken; zolang migratie 033 nog niet gedraaid is werkt
+de balk dus gewoon, zonder teller.
+
+De teller ververst mee met **Vernieuwen** en met elke mutatie, en de schermen
+Declaraties en Meerwerk werken hem bij zodra je ze sluit.
+
+### Toetsenbord
+
+| Toets | Doet |
+|---|---|
+| Tab | loopt door de balk en, met het menu open, door de items |
+| Enter | opent het menu en kiest het item |
+| Escape | sluit het menu en zet de focus terug op de menuknop |
+| ↑ ↓ | lopen door de items, rondlopend |
+
+De items zijn gewone knoppen en blijven met Tab bereikbaar; er is bewust geen
+roving tabindex, want die zou Tab uit het menu gooien. Klikken buiten het menu
+sluit het, en focus die het menu verlaat ook.
 
 ## Het weekoverzicht
 

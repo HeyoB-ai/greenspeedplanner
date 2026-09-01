@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, CalendarClock, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Settings, Trash2, User, Users, Wallet } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
 import Login from './components/Login';
+import MenuButton from './components/MenuButton';
 import WeekOverview from './planner/WeekOverview';
 import ShiftForm from './planner/ShiftForm';
 import PharmacySchedule from './planner/PharmacySchedule';
@@ -16,6 +17,7 @@ import ExtraWork from './planner/ExtraWork';
 import Declarations from './planner/Declarations';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
+import { Attention, getAttention, NO_ATTENTION } from './planner/attentionService';
 import { TYPE_STYLES } from './planner/constants';
 
 // Eén formulier-doel voor zowel aanmaken als bewerken. Het openen van dit
@@ -41,6 +43,7 @@ export default function App() {
   const [showExtraWork, setShowExtraWork] = useState(false);
   const [showDeclarations, setShowDeclarations] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
+  const [attention, setAttention] = useState<Attention>(NO_ATTENTION);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
   useEffect(() => {
@@ -55,6 +58,17 @@ export default function App() {
       .catch(() => { /* stil: generatie is niet kritisch voor het laden */ });
     getMaxHolidayDate().then(setMaxHoliday).catch(() => {});
   }, [user]);
+
+  // De telling achter de badge op Financieel. Meeliften op refreshSignal is
+  // genoeg: dat gaat omhoog na elke mutatie en bij Vernieuwen, en de schermen
+  // die de stand veranderen hogen het bij het sluiten op.
+  //
+  // Mislukt de aanroep, dan valt de badge stil in plaats van het scherm te
+  // breken. Dat dekt ook de periode waarin migratie 033 nog niet gedraaid is.
+  useEffect(() => {
+    if (!isPlanner(user)) { setAttention(NO_ATTENTION); return; }
+    getAttention().then(setAttention).catch(() => setAttention(NO_ATTENTION));
+  }, [user, refreshSignal]);
 
   async function confirmDelete() {
     if (!deletingShift) return;
@@ -112,78 +126,95 @@ export default function App() {
 
   return (
     <div className="min-h-full">
-      <header className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200">
+      <header className="flex items-center justify-between gap-3 px-4 py-3 bg-white border-b border-slate-200">
         <h1 className="font-semibold text-green-700">Greenspeed Planner</h1>
-        <div className="flex items-center gap-3 text-sm text-slate-600">
-          <span>{user.name}</span>
+        {/* Tien knoppen naast elkaar liepen de balk vol. Wat je tijdens het
+            plannen gebruikt blijft los staan; de rest zit onder Beheer (zelden
+            aangeraakt) en Financieel (de maandelijkse ronde: declaratie →
+            meerwerk → factuur, in die volgorde). */}
+        <div className="flex items-center gap-1 text-sm text-slate-600">
           <button
             onClick={() => topUpScheduleWindow().then((n) => { if (n > 0) setRefreshSignal((x) => x + 1); }).catch(() => {})}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-slate-100 hover:text-slate-900"
             title="Roosterconcepten bijwerken t/m het venster-einde"
           >
             <CalendarClock size={15} /> Rooster bijwerken
           </button>
           <button
-            onClick={() => setShowContacts(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Mobiele nummers van koeriers beheren"
-          >
-            <Phone size={15} /> Nummers
-          </button>
-          <button
-            onClick={() => setShowEmployees(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Personeelsadministratie — los van wie er kan inloggen"
-          >
-            <Users size={15} /> Medewerkers
-          </button>
-          <button
-            onClick={() => setShowPharmacies(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Plaatsnaam per apotheek — bepaalt de groepen in het weekoverzicht"
-          >
-            <Building2 size={15} /> Apotheken
-          </button>
-          <button
-            onClick={() => setShowAddresses(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Standplaats en reisafstanden per koerier"
-          >
-            <Home size={15} /> Afstanden
-          </button>
-          <button
-            onClick={() => setShowExtraWork(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Uitgelopen diensten vrijgeven voor goedkeuring door de apotheek"
-          >
-            <Clock size={15} /> Meerwerk
-          </button>
-          <button
-            onClick={() => setShowInvoicing(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Factuurregels per apotheek per periode"
-          >
-            <Receipt size={15} /> Facturatie
-          </button>
-          <button
-            onClick={() => setShowDeclarations(true)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-            title="Wat koeriers na afloop opgaven, naast wat het systeem berekende"
-          >
-            <FileText size={15} /> Declaraties
-          </button>
-          <button
             onClick={() => setRefreshSignal((n) => n + 1)}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-slate-100 hover:text-slate-900"
           >
             <RefreshCw size={15} /> Vernieuwen
           </button>
-          <button
-            onClick={async () => { await logout(); setUser(null); }}
-            className="inline-flex items-center gap-1 hover:text-slate-900"
-          >
-            <LogOut size={15} /> Uitloggen
-          </button>
+
+          <MenuButton
+            label="Beheer"
+            icon={<Settings size={15} />}
+            items={[
+              {
+                key: 'employees', label: 'Medewerkers', icon: <Users size={15} />,
+                title: 'Personeelsadministratie — los van wie er kan inloggen',
+                onSelect: () => setShowEmployees(true),
+              },
+              {
+                key: 'pharmacies', label: 'Apotheken', icon: <Building2 size={15} />,
+                title: 'Plaatsnaam, tarieven, factuuradres en ketens',
+                onSelect: () => setShowPharmacies(true),
+              },
+              {
+                key: 'addresses', label: 'Afstanden', icon: <Home size={15} />,
+                title: 'Standplaats en reisafstanden per koerier',
+                onSelect: () => setShowAddresses(true),
+              },
+              {
+                key: 'contacts', label: 'Nummers', icon: <Phone size={15} />,
+                title: 'Mobiele nummers van koeriers beheren',
+                onSelect: () => setShowContacts(true),
+              },
+            ]}
+          />
+
+          {/* De badge is de tegenprestatie voor het wegstoppen: zonder telling
+              verdwijnt een ingediende declaratie of een nieuwe melding achter
+              een klik. Geteld wordt alleen wat op de planner ligt te wachten. */}
+          <MenuButton
+            label="Financieel"
+            icon={<Wallet size={15} />}
+            badge={attention.total}
+            badgeTitle={`${attention.declarations} declaratie(s) te beoordelen, ${attention.extraWork} meerwerkmelding(en) vrij te geven`}
+            items={[
+              {
+                key: 'declarations', label: 'Declaraties', icon: <FileText size={15} />,
+                title: 'Wat koeriers na afloop opgaven, naast wat het systeem berekende',
+                badge: attention.declarations,
+                onSelect: () => setShowDeclarations(true),
+              },
+              {
+                key: 'extrawork', label: 'Meerwerk', icon: <Clock size={15} />,
+                title: 'Uitgelopen diensten vrijgeven voor goedkeuring door de apotheek',
+                badge: attention.extraWork,
+                onSelect: () => setShowExtraWork(true),
+              },
+              {
+                key: 'invoicing', label: 'Facturatie', icon: <Receipt size={15} />,
+                title: 'Factuurregels per apotheek per periode',
+                onSelect: () => setShowInvoicing(true),
+              },
+            ]}
+          />
+
+          <span className="mx-1 h-5 w-px bg-slate-200" aria-hidden="true" />
+
+          <MenuButton
+            label={user.name}
+            icon={<User size={15} />}
+            items={[
+              {
+                key: 'logout', label: 'Uitloggen', icon: <LogOut size={15} />,
+                onSelect: () => { logout().then(() => setUser(null)).catch(() => setUser(null)); },
+              },
+            ]}
+          />
         </div>
       </header>
 
@@ -297,13 +328,19 @@ export default function App() {
 
       {showAddresses && <CourierAddresses onClose={() => setShowAddresses(false)} />}
 
-      {showDeclarations && <Declarations onClose={() => setShowDeclarations(false)} />}
+      {/* Beoordelen haalt rijen uit de telling; het sluiten van het scherm
+          moet de badge dus bijwerken. */}
+      {showDeclarations && (
+        <Declarations onClose={() => { setShowDeclarations(false); setRefreshSignal((n) => n + 1); }} />
+      )}
 
       {showInvoicing && <Invoicing onClose={() => setShowInvoicing(false)} />}
 
       {showEmployees && <Employees onClose={() => setShowEmployees(false)} />}
 
-      {showExtraWork && <ExtraWork onClose={() => setShowExtraWork(false)} />}
+      {showExtraWork && (
+        <ExtraWork onClose={() => { setShowExtraWork(false); setRefreshSignal((n) => n + 1); }} />
+      )}
 
       {scheduleTarget && (
         <PharmacySchedule
