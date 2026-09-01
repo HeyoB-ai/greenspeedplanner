@@ -41,6 +41,10 @@ export interface DeclarationView {
   // Waarom de planning betwist heeft. Bij goedgekeurd meestal leeg; bij betwist
   // is dit het enige wat de koerier verder helpt.
   review_note: string | null;
+  // Zzp'er (migratie 035): dan geen reiskostenvraag. Kilometers horen bij deze
+  // koerier in het onkostenblok, want een vergoeding waar geen recht op bestaat
+  // zou naast die post nog eens worden doorbelast.
+  is_contractor: boolean;
 }
 
 export interface SubmitInput {

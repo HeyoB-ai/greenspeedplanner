@@ -57,6 +57,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `032_chain_split.sql` | factuursplitsing keten/filiaal, per keten in te schakelen: gebudgetteerde uren naar het centrale adres, meerwerk naar het filiaal |
 | `033_planner_attention.sql` | `planner_attention()`: telt wat op de planner wacht, voor de badge op het menu Financieel |
 | `034_attention_disputed.sql` | betwistingen tellen mee in die badge en komen apart terug |
+| `035_zzp_no_travel.sql` | geen kilometervergoeding voor zzp'ers: vijfde tak in `declaration_compute()`, vóór de vier bestaande |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -89,6 +90,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `032_chain_split_test.sql` | splitsing uit én aan, het gereserveerde blok bij korter werken, meerwerk/reiskosten/onkosten/spoed naar het filiaal, en dat keten + filiaal optelt tot het regeltotaal |
 | `033_planner_attention_test.sql` | wat wel en niet meetelt (ingediend wel, openstaand niet; nieuw wel, vrijgegeven niet), het totaal, en dat een koerier nullen krijgt |
 | `034_attention_disputed_test.sql` | betwist telt mee en komt apart terug, goedgekeurd en verlopen niet, en het totaal telt niets dubbel |
+| `035_zzp_no_travel_test.sql` | loondienst onveranderd, zzp zonder bedrag/tarief/markering, eigen auto omzeilt de tak niet, en er gaat niets naar de factuur |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -683,6 +685,58 @@ eigen auto?
 
 Bij eigen auto en bij een andere apotheek vervalt de drempel volledig. Dat is
 tegenintuitief en bewust zo bevestigd; zie punt 1 van het ontwerp.
+
+### Zzp'ers krijgen geen kilometervergoeding
+
+De regel hierboven geldt alleen voor loondienst. Een zzp'er heeft geen recht op
+reiskostenvergoeding: die factureert zijn werkelijke kosten, net als parkeren of
+een veerpont. Sinds migratie 035 staat er daarom een vijfde tak **vóór** de vier
+andere:
+
+```
+zzp'er? -> ja -> geen vergoeding, geen tarief        (zzp)
+        +- nee -> de vier takken hierboven
+```
+
+Wat er misging zonder die tak: een zzp'er die zijn kilometers als onkostenpost
+invulde kreeg daarnáást de berekende vergoeding, en dan werd dezelfde rit twee
+keer aan de apotheek doorbelast.
+
+Drie dingen om te weten:
+
+* **De referentieafstand blijft staan** als informatie. Alleen
+  `computed_reimbursable_km` en het tarief zijn leeg.
+* **Dit is geen `incomplete`-geval.** Er hóórt niets te staan, dus de redenen die
+  tot dat punt verzameld zijn ("geen tarief", "geen afstand bekend") worden
+  gewist. Een markering op een regel die klopt leert de planner om markeringen te
+  negeren.
+* **Onbekend is geen zzp.** De bron is `employees.employment_type` (*Medewerkers*
+  in de kop van de app), met terugval op `user_profiles.employmentType`. Staat er
+  niets, dan rekent de vierdelige regel gewoon door — de vergoeding stilzwijgend
+  laten vervallen zou een koerier geld kosten zonder dat iemand het ziet.
+
+Op de invulpagina verdwijnt bij een zzp'er de reiskostenvraag helemaal, en het
+onkostenblok zegt het tegenovergestelde van wat het bij loondienst zegt:
+
+| | Bij het onkostenveld staat |
+|---|---|
+| zzp | *Reiskosten en andere onkosten (parkeren, veerpont) declareer je hier.* |
+| loondienst | *Parkeren, een veerpont, een OV-kaartje. Geen kilometers — die lopen via de vraag hierboven.* |
+
+> ⚠ De **mail** kent dat onderscheid nog niet: bij een dienst met eigen auto staat
+> er "Reed je op eigen kosten? Geef dan ook de totaal gereden kilometers op",
+> ook voor een zzp'er die die vraag op de pagina niet krijgt. Dat is één regel in
+> `declaration_sweep()` (migratie 019, de payload-sleutel `own_car`), maar die
+> functie zit in de mailketen en is hier bewust niet aangeraakt.
+
+### Dubbel doorbelasten zichtbaar maken
+
+Staat er een onkostenpost waarvan de omschrijving *km* of *kilometer* bevat,
+terwijl er op dezelfde declaratie ook een berekende kilometervergoeding staat die
+de koerier geclaimd heeft? Dan meldt het scherm *Declaraties* dat in het rood
+onder de regel. Dat kan bij loondienst nog steeds gebeuren, bijvoorbeeld als
+iemand zijn kilometers voor de zekerheid ook maar even als onkost opvoert, en je
+wilt het zien vóór het factureren en niet erna.
 
 > ⚠ **Zet de cron voor `declaration_sweep()` nog NIET aan** voordat stap 1 t/m 6
 > hieronder gedaan zijn. `declaration_settings.active_from` beschermt tegen mail

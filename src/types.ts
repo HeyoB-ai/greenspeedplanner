@@ -247,7 +247,9 @@ export type DeclarationStatus = 'open' | 'submitted' | 'approved' | 'disputed';
 //  other_pharmacy  andere apotheek dan de standplaats: volledige afstand
 //  above_threshold afstand min drempel
 //  none            binnen de drempel: geen vergoeding
-export type ReimbursementRule = 'own_car' | 'other_pharmacy' | 'above_threshold' | 'none';
+// 'zzp' (migratie 035): geen recht op kilometervergoeding — de zzp'er
+// declareert zijn kilometers als onkostenpost, net als parkeren.
+export type ReimbursementRule = 'own_car' | 'other_pharmacy' | 'above_threshold' | 'none' | 'zzp';
 
 // Eén rij uit declaration_overview(): wat de koerier opgaf naast wat het
 // systeem berekende. De namen volgen de functie 1-op-1 (snake_case), zodat de

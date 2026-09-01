@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, FileText, Info, RefreshCw, Undo2, X } from 'lucide-react';
 import { DeclarationRow } from '../types';
 import {
-  RULE_LABELS, STATUS_LABELS, euroText, getDeclarations, hoursText, kmText,
-  minutesText, recomputeOpenDeclarations, reviewDeclaration,
+  RULE_LABELS, STATUS_LABELS, doubleChargedKm, euroText, getDeclarations, hoursText,
+  kmText, minutesText, recomputeOpenDeclarations, reviewDeclaration,
 } from './declarationService';
 
 interface Props {
@@ -179,6 +179,10 @@ export default function Declarations({ onClose }: Props) {
                       ? r.actual_minutes - r.planned_minutes
                       : null;
                     const busy = busyId === r.declaration_id;
+                    // Kilometers als onkostenpost naast een berekende
+                    // vergoeding: dezelfde rit twee keer op de factuur. Dat
+                    // wil je zien vóór het factureren, niet erna.
+                    const doubleKm = doubleChargedKm(r);
 
                     return (
                       <tr key={r.declaration_id} className={r.computed_incomplete ? 'bg-amber-50/60' : undefined}>
@@ -260,6 +264,15 @@ export default function Declarations({ onClose }: Props) {
                                   bon verwacht
                                 </span>
                               )}
+                            </div>
+                          )}
+                          {doubleKm.length > 0 && (
+                            <div className="mt-1 flex items-start gap-1 text-xs text-rose-700">
+                              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                              <span>
+                                Kilometers staan óók als onkost ({doubleKm.join(', ')}) naast een
+                                berekende reiskostenvergoeding — mogelijk dubbel doorbelast.
+                              </span>
                             </div>
                           )}
                           {r.courier_note && (

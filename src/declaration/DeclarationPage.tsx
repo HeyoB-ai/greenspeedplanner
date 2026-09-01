@@ -67,9 +67,15 @@ export default function DeclarationPage({ token }: Props) {
     setError('');
 
     if (!start || !end) { setError('Vul allebei de tijden in.'); return; }
-    if (claims === null) { setError('Geef aan of je reiskosten declareert.'); return; }
+    // Bij een zzp'er staat de reiskostenvraag niet op het scherm; dan is er ook
+    // niets onbeantwoord. Wat er de deur uit gaat is een harde false: geen
+    // claim, ongeacht wat er ooit in de rij stond.
+    if (!view.is_contractor && claims === null) {
+      setError('Geef aan of je reiskosten declareert.');
+      return;
+    }
 
-    const wantsKm = claims && view.own_car;
+    const wantsKm = !view.is_contractor && claims && view.own_car;
     const kmValue = wantsKm ? Number(km.replace(',', '.')) : null;
     if (wantsKm && (!Number.isFinite(kmValue as number) || (kmValue as number) <= 0)) {
       setError('Vul het aantal gereden kilometers in.');
@@ -94,7 +100,9 @@ export default function DeclarationPage({ token }: Props) {
       const updated = await submitDeclaration(token, {
         actualStart: start,
         actualEnd: end,
-        claimsTravel: claims,
+        // Na de controle hierboven is claims niet meer null; de vergelijking
+        // is er voor de typecheck en verandert niets aan het gedrag.
+        claimsTravel: view.is_contractor ? false : claims === true,
         ownCarKm: kmValue,
         note: note.trim() || null,
         expenses: expenses.map((e) => ({
@@ -169,13 +177,13 @@ export default function DeclarationPage({ token }: Props) {
   }
 
   const duration = durationText(start, end);
-  const wantsKm = claims === true && view.own_car;
+  const wantsKm = !view.is_contractor && claims === true && view.own_car;
 
   return (
     <Shell>
       <h1 className="font-semibold text-slate-800">Hoi {view.courier_name.split(' ')[0]},</h1>
       <p className="text-sm text-slate-600 mt-1">
-        Je dienst zit erop. Twee vragen, dan is het klaar.
+        Je dienst zit erop. {view.is_contractor ? 'Eén vraag' : 'Twee vragen'}, dan is het klaar.
       </p>
       {/* Nadrukkelijk een verwachting en geen deadline. De tweede zin hoort
           erbij: wie denkt dat hij te laat is, vult helemaal niets meer in — en
@@ -229,6 +237,10 @@ export default function DeclarationPage({ token }: Props) {
       </section>
 
       {/* ── Vraag 2: reiskosten ─────────────────────────────────────────── */}
+      {/* Alleen bij loondienst. Een zzp'er heeft geen recht op
+          kilometervergoeding en declareert zijn kilometers hieronder als
+          onkostenpost; deze vraag zou tot dubbel doorbelasten leiden. */}
+      {!view.is_contractor && (
       <section className="mt-5">
         <h2 className="text-sm font-semibold text-slate-800">Declareer je reiskosten voor deze dienst?</h2>
         <div className="mt-2 flex gap-2">
@@ -277,12 +289,19 @@ export default function DeclarationPage({ token }: Props) {
           </p>
         )}
       </section>
+      )}
 
       {/* ── Andere onkosten ─────────────────────────────────────────────── */}
       <section className="mt-5">
-        <h2 className="text-sm font-semibold text-slate-800">Andere onkosten</h2>
+        <h2 className="text-sm font-semibold text-slate-800">
+          {view.is_contractor ? 'Onkosten' : 'Andere onkosten'}
+        </h2>
+        {/* Twee tegenovergestelde aanwijzingen, en dat is de bedoeling: bij de
+            een horen kilometers hier juist wél thuis, bij de ander juist niet. */}
         <p className="text-xs text-slate-500 mt-0.5">
-          Parkeren, een veerpont, een OV-kaartje. Mag leeg blijven.
+          {view.is_contractor
+            ? 'Reiskosten en andere onkosten (parkeren, veerpont) declareer je hier. Mag leeg blijven.'
+            : 'Parkeren, een veerpont, een OV-kaartje. Geen kilometers — die lopen via de vraag hierboven. Mag leeg blijven.'}
         </p>
 
         <div className="mt-2 space-y-2">
@@ -446,6 +465,7 @@ function ReadOnlyView({ view }: { view: DeclarationView }) {
                 : <span className="text-slate-400">niets ingevuld</span>}
             </dd>
           </div>
+          {!view.is_contractor && (
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Reiskosten</dt>
             <dd className="text-right">
@@ -458,6 +478,7 @@ function ReadOnlyView({ view }: { view: DeclarationView }) {
               )}
             </dd>
           </div>
+          )}
           {view.expenses.length > 0 && (
             <div className="flex justify-between gap-4">
               <dt className="text-slate-500">Onkosten</dt>

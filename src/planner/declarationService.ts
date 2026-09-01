@@ -55,7 +55,29 @@ export const RULE_LABELS: Record<string, string> = {
   other_pharmacy:  'andere apotheek',
   above_threshold: 'boven drempel',
   none:            'binnen drempel',
+  // Migratie 035: geen recht op vergoeding, dus ook geen bedrag. Kilometers
+  // van een zzp'er lopen via de onkosten.
+  zzp:             'zzp — geen vergoeding',
 };
+
+// -- Dezelfde rit twee keer doorbelast? -----------------------------------
+// Een onkostenpost die over kilometers gaat, naast een berekende
+// kilometervergoeding op dezelfde declaratie. Dat is wat er bij zzp'ers
+// misging voordat migratie 035 er was, en het kan bij loondienst nog steeds
+// gebeuren als iemand zijn kilometers voor de zekerheid ook maar even als
+// onkost opvoert.
+//
+// De vergoeding telt alleen mee als de koerier hem ook geclaimd heeft: zonder
+// claim komt er niets op de factuur en valt er dus niets dubbel te belasten.
+const KM_IN_TEXT = /km|kilometer/i;
+
+export function doubleChargedKm(r: DeclarationRow): string[] {
+  if (r.claims_travel !== true) return [];
+  if ((r.computed_reimbursable_km ?? 0) <= 0) return [];
+  return (r.expenses ?? [])
+    .filter((e) => KM_IN_TEXT.test(e.description))
+    .map((e) => e.description);
+}
 
 export const STATUS_LABELS: Record<string, string> = {
   open:      'niet ingevuld',
