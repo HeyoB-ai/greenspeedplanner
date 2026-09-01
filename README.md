@@ -56,6 +56,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `031_extra_work.sql` | meerwerk: `extra_work`, de vrijgave door de planner, de goedkeuringslus met de apotheek, en `pharmacies.billing_email` |
 | `032_chain_split.sql` | factuursplitsing keten/filiaal, per keten in te schakelen: gebudgetteerde uren naar het centrale adres, meerwerk naar het filiaal |
 | `033_planner_attention.sql` | `planner_attention()`: telt wat op de planner wacht, voor de badge op het menu Financieel |
+| `034_attention_disputed.sql` | betwistingen tellen mee in die badge en komen apart terug |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -87,6 +88,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `031_extra_work_test.sql` | drempel, verdeling over twee apotheken, vrijgave (met en zonder adres), token en antwoord, en de drie factuuruitkomsten — plus dat de declaratie van de koerier nergens door verandert |
 | `032_chain_split_test.sql` | splitsing uit én aan, het gereserveerde blok bij korter werken, meerwerk/reiskosten/onkosten/spoed naar het filiaal, en dat keten + filiaal optelt tot het regeltotaal |
 | `033_planner_attention_test.sql` | wat wel en niet meetelt (ingediend wel, openstaand niet; nieuw wel, vrijgegeven niet), het totaal, en dat een koerier nullen krijgt |
+| `034_attention_disputed_test.sql` | betwist telt mee en komt apart terug, goedgekeurd en verlopen niet, en het totaal telt niets dubbel |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -372,25 +374,50 @@ onderdelen zelf zodra je uitklapt.
 
 Geteld wordt **alleen wat op de planner ligt te wachten**:
 
-| Telt mee | Telt niet mee | Waarom niet |
-|---|---|---|
-| declaratie `submitted` | declaratie `open` | daar wachten we op de koerier |
-| meerwerk `new` | meerwerk `released` | ligt bij de apotheek, 48 uur |
-| | meerwerk `expired` | zonder reactie gewoon factureerbaar |
-| | meerwerk `disputed` | afgehandeld door de klant; hoort niet in een werkvoorraad |
+| Telt mee | | Telt niet mee | Waarom niet |
+|---|---|---|---|
+| declaratie `submitted` | ingediend, ligt bij de planner | declaratie `open` | daar wachten we op de koerier |
+| declaratie `disputed` | betwist en blijven liggen | declaratie `approved` | klaar |
+| meerwerk `new` | nog niet vrijgegeven | meerwerk `released` | ligt bij de apotheek, 48 uur |
+| meerwerk `disputed` | de apotheek is het er niet mee eens | meerwerk `expired` | zonder reactie gewoon factureerbaar |
+| | | meerwerk `approved` | klaar |
 
 Zou `open` meetellen, dan is de badge geen werkvoorraad meer maar een getal dat
-elke week oploopt en dat niemand nog leest. Betwist meerwerk is een grensgeval —
-het vraagt wél iets — maar het staat in het meerwerkscherm bovenaan en niet in
-deze teller.
+elke week oploopt en dat niemand nog leest.
 
-De telling zit in `planner_attention()` (migratie 033) en niet in de frontend:
+### Betwistingen kleuren rood
+
+Een betwisting is de meest urgente categorie in het systeem: er staat geld open
+bij iemand die het er niet mee eens is, en dat lost zichzelf nooit op. Zit er een
+betwisting in de telling, dan wordt de badge rood in plaats van amber — amber is
+in deze app een signaal, rood is urgentie. Hetzelfde geldt per onderdeel, dus na
+het uitklappen zie je meteen of het bij Declaraties of bij Meerwerk zit.
+
+De twee soorten betwisting zijn niet hetzelfde:
+
+* **meerwerk `disputed`** wordt gezet door de **apotheek**. Het meerwerk komt
+  niet op de factuur, de koerier krijgt het wel betaald — er ligt dus een
+  verschil dat iemand moet oppakken.
+* **declaratie `disputed`** zet de **planner zelf**, met `declaration_review`
+  (`dispute`). De status blijft staan tot hij hem alsnog goedkeurt of heropent.
+  Dat betekent: **de badge gaat niet op nul zolang er een betwisting openstaat.**
+  Dat is de bedoeling — een betwisting die niemand oppakt hoort zichtbaar te
+  blijven — maar het is wel de reden dat de teller anders leest dan een
+  postvak-in.
+
+De betwiste aantallen zitten *in* de twee werkvoorraden en worden er niet
+bovenop geteld; `total` telt dus niets dubbel. Geval 5 van
+`034_attention_disputed_test.sql` bewaakt dat.
+
+De telling zit in `planner_attention()` (migraties 033 en 034) en niet in de frontend:
 twee volledige overzichten ophalen om er twee getallen uit te tellen zou bij elke
 verversing alle declaraties over de lijn trekken. De functie is `SECURITY
 DEFINER` en leest twee dichte tabellen, dus staat `is_privileged()` in beide
 takken — een koerier krijgt nullen. Mislukt de aanroep, dan verdwijnt de badge in
 plaats van het scherm te breken; zolang migratie 033 nog niet gedraaid is werkt
-de balk dus gewoon, zonder teller.
+de balk dus gewoon, zonder teller. Draait 033 wel en 034 nog niet, dan telt de
+badge zonder betwistingen: de frontend leest de nieuwe velden met een terugval
+op nul.
 
 De teller ververst mee met **Vernieuwen** en met elke mutatie, en de schermen
 Declaraties en Meerwerk werken hem bij zodra je ze sluit.

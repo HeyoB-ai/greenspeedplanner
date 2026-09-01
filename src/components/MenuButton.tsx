@@ -27,13 +27,18 @@ export type MenuItem = {
   // Aantal onderdelen dat op de planner wacht. Staat ook op de menuknop zelf
   // als totaal; hier zodat na het uitklappen meteen zichtbaar is waar het zit.
   badge?: number;
+  // Er zit een betwisting bij. Amber is in deze app een signaal, rood is
+  // urgentie — en een betwisting lost zichzelf nooit op.
+  urgent?: boolean;
   onSelect: () => void;
 };
 
-function Badge({ count, what }: { count: number; what: string }) {
+function Badge({ count, what, urgent }: { count: number; what: string; urgent?: boolean }) {
   return (
     <span
-      className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white"
+      className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white ${
+        urgent ? 'bg-rose-600' : 'bg-amber-500'
+      }`}
       title={what}
       aria-label={what}
     >
@@ -43,13 +48,14 @@ function Badge({ count, what }: { count: number; what: string }) {
 }
 
 export default function MenuButton({
-  label, icon, items, badge, badgeTitle,
+  label, icon, items, badge, badgeTitle, urgent,
 }: {
   label: string;
   icon: ReactNode;
   items: MenuItem[];
   badge?: number;
   badgeTitle?: string;
+  urgent?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -113,7 +119,9 @@ export default function MenuButton({
       >
         {icon}
         {label}
-        {badge ? <Badge count={badge} what={badgeTitle ?? `${badge} onderdelen vragen aandacht`} /> : null}
+        {badge ? (
+          <Badge count={badge} urgent={urgent} what={badgeTitle ?? `${badge} onderdelen vragen aandacht`} />
+        ) : null}
         <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -137,7 +145,9 @@ export default function MenuButton({
             >
               <span className="text-slate-500">{it.icon}</span>
               <span className="flex-1">{it.label}</span>
-              {it.badge ? <Badge count={it.badge} what={`${it.badge} wacht op jou`} /> : null}
+              {it.badge ? (
+                <Badge count={it.badge} urgent={it.urgent} what={`${it.badge} wacht op jou`} />
+              ) : null}
             </button>
           ))}
         </div>

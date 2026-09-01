@@ -176,23 +176,30 @@ export default function App() {
 
           {/* De badge is de tegenprestatie voor het wegstoppen: zonder telling
               verdwijnt een ingediende declaratie of een nieuwe melding achter
-              een klik. Geteld wordt alleen wat op de planner ligt te wachten. */}
+              een klik. Geteld wordt alleen wat op de planner ligt te wachten —
+              inclusief betwistingen, die rood kleuren omdat er geld openstaat
+              bij iemand die het er niet mee eens is. */}
           <MenuButton
             label="Financieel"
             icon={<Wallet size={15} />}
             badge={attention.total}
-            badgeTitle={`${attention.declarations} declaratie(s) te beoordelen, ${attention.extraWork} meerwerkmelding(en) vrij te geven`}
+            urgent={attention.disputed > 0}
+            badgeTitle={`${attention.declarations} declaratie(s) en ${attention.extraWork} meerwerkmelding(en)${
+              attention.disputed > 0 ? `, waarvan ${attention.disputed} betwist` : ''
+            }`}
             items={[
               {
                 key: 'declarations', label: 'Declaraties', icon: <FileText size={15} />,
                 title: 'Wat koeriers na afloop opgaven, naast wat het systeem berekende',
                 badge: attention.declarations,
+                urgent: attention.declarationsDisputed > 0,
                 onSelect: () => setShowDeclarations(true),
               },
               {
                 key: 'extrawork', label: 'Meerwerk', icon: <Clock size={15} />,
                 title: 'Uitgelopen diensten vrijgeven voor goedkeuring door de apotheek',
                 badge: attention.extraWork,
+                urgent: attention.extraWorkDisputed > 0,
                 onSelect: () => setShowExtraWork(true),
               },
               {
