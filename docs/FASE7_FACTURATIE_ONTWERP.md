@@ -56,10 +56,17 @@ die declaratie hangt) volgt dezelfde verhouding als de uren. Alleen als de
 koerier ook daadwerkelijk declareert: het is altijd
 `claims_travel` × `computed_reimbursable_km`, nooit dat tweede getal alleen.
 
+### Onkosten — doorbelasten zonder marge
+
+Wat de koerier voorschoot en in zijn declaratie opgaf (migratie 028) wordt
+doorbelast naar rato van de geplande minuten, net als de uren en de reiskosten:
+bij een gedeelde dienst is een parkeerkaartje niet aan één apotheek toe te
+schrijven. Zonder marge — dit is doorbelasten, geen dienst.
+
 ### Spoed — alleen het afgesproken bedrag
 
 Bij `urgent` telt uitsluitend `shifts.urgent_amount`: geen uren, geen
-starttarief, geen reiskosten. Dat bedrag wordt telefonisch afgesproken en komt
+starttarief, geen reiskosten, en ook geen onkosten. Dat bedrag wordt telefonisch afgesproken en komt
 dus niet uit een tarieventabel; er hoort een toelichting bij (`urgent_note`) zodat
 later navraag mogelijk is.
 

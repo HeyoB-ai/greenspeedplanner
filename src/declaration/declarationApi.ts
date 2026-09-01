@@ -33,6 +33,11 @@ export interface DeclarationView {
   own_car_km: number | null;
   courier_note: string | null;
   submitted_at: string | null;
+  // Onkosten die geen kilometervergoeding zijn (migratie 028). Het bonnetje zit
+  // niet in het systeem: dat gaat per mail naar de planning.
+  expenses: { description: string; amount_eur: number }[];
+  // Wordt er van deze koerier een bon verwacht? Een herinnering, geen voorwaarde.
+  expects_receipt: boolean;
   // Waarom de planning betwist heeft. Bij goedgekeurd meestal leeg; bij betwist
   // is dit het enige wat de koerier verder helpt.
   review_note: string | null;
@@ -44,6 +49,10 @@ export interface SubmitInput {
   claimsTravel: boolean;
   ownCarKm: number | null;
   note: string | null;
+  // De hele lijst gaat mee, ook als hij leeg is: de server vervangt wat er stond.
+  // Per regel bijhouden wat gewijzigd is levert alleen toestand op die uit de pas
+  // kan lopen.
+  expenses: { description: string; amount_eur: string }[];
 }
 
 // Het token bestaat niet. Eén nietszeggende melding, want de server maakt hier
@@ -114,6 +123,7 @@ export async function submitDeclaration(
       claims_travel: input.claimsTravel,
       own_car_km: input.ownCarKm,
       note: input.note,
+      expenses: input.expenses,
     }),
   });
   const body = await parse(res);

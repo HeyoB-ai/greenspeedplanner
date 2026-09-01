@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Clock, Info, MapPin } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Info, MapPin, Plus, Trash2 } from 'lucide-react';
 import {
   DeclarationClosedError, DeclarationView, LinkInvalidError, durationText, formatDate,
   joinNames, loadDeclaration, submitDeclaration,
@@ -27,6 +27,12 @@ export default function DeclarationPage({ token }: Props) {
   const [claims, setClaims] = useState<boolean | null>(null);
   const [km, setKm] = useState('');
   const [note, setNote] = useState('');
+  // Onkosten die geen kilometervergoeding zijn (migratie 028). Als tekst, zodat
+  // een half getypt bedrag niet meteen op 0 springt. Standaard één lege regel:
+  // een blok zonder velden nodigt niet uit, en een lege regel kost niets — de
+  // server gooit hem weg.
+  const [expenses, setExpenses] = useState<{ description: string; amount: string }[]>(
+    [{ description: '', amount: '' }]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -43,6 +49,10 @@ export default function DeclarationPage({ token }: Props) {
         setClaims(d.claims_travel);
         setKm(d.own_car_km != null ? String(d.own_car_km) : '');
         setNote(d.courier_note ?? '');
+        setExpenses(
+          d.expenses && d.expenses.length > 0
+            ? d.expenses.map((e) => ({ description: e.description, amount: String(e.amount_eur) }))
+            : [{ description: '', amount: '' }]);
         setSaved(d.status === 'submitted');
       })
       .catch((e) => {
@@ -66,6 +76,19 @@ export default function DeclarationPage({ token }: Props) {
       return;
     }
 
+    // Een regel met alleen een omschrijving of alleen een bedrag is bijna altijd
+    // een vergissing. De server weigert het ook, maar hier staat de melding naast
+    // het veld in plaats van onder de knop.
+    const halfFilled = expenses.some((e) => {
+      const d = e.description.trim();
+      const a = e.amount.trim();
+      return (d === '') !== (a === '');
+    });
+    if (halfFilled) {
+      setError('Vul bij elke onkostenpost zowel een omschrijving als een bedrag in.');
+      return;
+    }
+
     setBusy(true);
     try {
       const updated = await submitDeclaration(token, {
@@ -74,6 +97,10 @@ export default function DeclarationPage({ token }: Props) {
         claimsTravel: claims,
         ownCarKm: kmValue,
         note: note.trim() || null,
+        expenses: expenses.map((e) => ({
+          description: e.description.trim(),
+          amount_eur: e.amount.trim().replace(',', '.'),
+        })),
       });
       if (updated) setView(updated);
       setSaved(true);
@@ -251,6 +278,70 @@ export default function DeclarationPage({ token }: Props) {
         )}
       </section>
 
+      {/* ── Andere onkosten ─────────────────────────────────────────────── */}
+      <section className="mt-5">
+        <h2 className="text-sm font-semibold text-slate-800">Andere onkosten</h2>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Parkeren, een veerpont, een OV-kaartje. Mag leeg blijven.
+        </p>
+
+        <div className="mt-2 space-y-2">
+          {expenses.map((e, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="text" value={e.description} disabled={busy}
+                placeholder="Waarvoor?"
+                onChange={(ev) => setExpenses((list) =>
+                  list.map((x, j) => (j === i ? { ...x, description: ev.target.value } : x)))}
+                className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-2 text-base bg-white disabled:opacity-60"
+              />
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-sm text-slate-500">€</span>
+                <input
+                  type="text" inputMode="decimal" value={e.amount} disabled={busy}
+                  placeholder="0,00"
+                  onChange={(ev) => setExpenses((list) =>
+                    list.map((x, j) => (j === i ? { ...x, amount: ev.target.value } : x)))}
+                  className="w-24 border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60"
+                />
+              </div>
+              {/* De laatste regel blijft staan: een leeg blok zonder velden maakt
+                  niet duidelijk dat hier iets kan. */}
+              {expenses.length > 1 && (
+                <button
+                  type="button" disabled={busy}
+                  onClick={() => setExpenses((list) => list.filter((_, j) => j !== i))}
+                  className="text-slate-400 hover:text-red-600 disabled:opacity-60 shrink-0"
+                  aria-label="Regel weghalen"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <button
+          type="button" disabled={busy}
+          onClick={() => setExpenses((list) => [...list, { description: '', amount: '' }])}
+          className="mt-2 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-green-700 disabled:opacity-60"
+        >
+          <Plus size={15} /> Nog een post
+        </button>
+
+        {/* Voor koeriers in loondienst moet de bon er los achteraan. Met de datum
+            en de apotheek erbij, want dat is precies wat de planning nodig heeft
+            om de mail bij de juiste dienst te leggen — en wat de koerier een dag
+            later niet meer paraat heeft. */}
+        {view.expects_receipt && (
+          <p className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600">
+            Stuur de bon per mail naar de planning, met erbij:{' '}
+            <strong>{formatDate(view.shift_date)}</strong> bij{' '}
+            <strong>{joinNames(view.pharmacies)}</strong>. Zonder bon kunnen we het niet uitbetalen.
+          </p>
+        )}
+      </section>
+
       {/* ── Ruimte voor het geval dat niet in een veld past ──────────────── */}
       <section className="mt-5">
         <label className="block">
@@ -367,6 +458,18 @@ function ReadOnlyView({ view }: { view: DeclarationView }) {
               )}
             </dd>
           </div>
+          {view.expenses.length > 0 && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Onkosten</dt>
+              <dd className="text-right">
+                {view.expenses.map((e, i) => (
+                  <div key={i} className="tabular-nums whitespace-nowrap">
+                    {e.description} · € {Number(e.amount_eur).toFixed(2).replace('.', ',')}
+                  </div>
+                ))}
+              </dd>
+            </div>
+          )}
           {view.courier_note && (
             <div className="flex justify-between gap-4">
               <dt className="text-slate-500">Opmerking</dt>

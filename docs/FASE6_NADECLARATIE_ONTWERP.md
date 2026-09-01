@@ -192,6 +192,24 @@ De eindtijd komt uit `declaration_shift_end()`, dezelfde definitie waarmee de
 sweep bepaalt dát een dienst af is. Anders zou "48 uur na afloop" hier iets
 anders betekenen dan daar.
 
+### Onkosten staan naast de rekenregel, niet erin
+
+Sinds **migratie 028** kan de koerier losse posten opgeven die geen
+kilometervergoeding zijn: parkeren, een veerpont, een OV-kaartje
+(`declaration_expenses`, meerdere per declaratie). Bonnetjes gaan buiten het
+systeem om, per mail — er is geen upload.
+
+`declaration_compute()` is daarvoor niet aangeraakt, en dat is een keuze: die
+functie berekent de reiskostenregel met haar vier takken, terwijl onkosten niet
+berekend worden maar opgegeven. Er zit geen drempel, geen tarief en geen
+standplaats aan vast. Zouden ze in `computed_reimbursable_km` meelopen, dan lopen
+"wat de regel oplevert" en "wat de koerier voorschoot" door elkaar, en is achteraf
+niet meer te zien welk deel waarvan komt.
+
+De markering *bon verwacht* verschijnt alleen als er ook werkelijk onkosten zijn —
+een herinnering bij een lege declaratie is ruis — en is een signaal, geen
+blokkade: de planner kan gewoon goedkeuren.
+
 ### Corrigeren mag, tot de planner kijkt
 
 Na indienen blijft de link werken zolang de status `submitted` is. Zodra de

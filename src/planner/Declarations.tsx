@@ -246,6 +246,22 @@ export default function Declarations({ onClose }: Props) {
                           {r.computed_incomplete && (
                             <div className="text-xs text-amber-700 mt-0.5">{r.computed_reason}</div>
                           )}
+                          {/* Onkosten staan bewust in deze kolom en niet in een
+                              eigen: het zijn er meestal nul, en een lege kolom
+                              over de hele breedte kost meer dan hij oplevert. */}
+                          {r.expenses_amount > 0 && (
+                            <div className="text-xs text-slate-600 mt-0.5">
+                              Onkosten {euroText(r.expenses_amount)}
+                              <span className="text-slate-400">
+                                {' · '}{r.expenses.map((e) => e.description).join(', ')}
+                              </span>
+                              {r.expects_receipt && (
+                                <span className="ml-1.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5">
+                                  bon verwacht
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {r.courier_note && (
                             <div className="text-xs text-slate-500 mt-0.5 italic">“{r.courier_note}”</div>
                           )}
@@ -365,6 +381,11 @@ export default function Declarations({ onClose }: Props) {
               <p>
                 Bij eigen auto geeft de koerier zelf de kilometers op; dat is niet controleerbaar en zo bedoeld.
                 Het berekende getal ernaast is een referentie om afwijkingen te zien, geen afkeuringsgrond.
+              </p>
+              <p>
+                <strong>Onkosten</strong> zijn posten die geen kilometervergoeding zijn — parkeren, een
+                veerpont, een OV-kaartje. <strong>Bon verwacht</strong> betekent dat deze koerier de bon
+                per mail moet nasturen. Dat is een signaal, geen blokkade: je kunt gewoon goedkeuren.
               </p>
             </div>
           </details>

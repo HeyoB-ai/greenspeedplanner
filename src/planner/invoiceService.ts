@@ -72,6 +72,7 @@ export interface InvoiceTotals {
   hours: number;
   start: number;
   travel: number;
+  expenses: number;
   urgent: number;
   total: number;
   billedMinutes: number;
@@ -82,13 +83,14 @@ export interface InvoiceTotals {
 
 export function sumLines(lines: InvoiceLine[]): InvoiceTotals {
   const t: InvoiceTotals = {
-    hours: 0, start: 0, travel: 0, urgent: 0, total: 0,
+    hours: 0, start: 0, travel: 0, expenses: 0, urgent: 0, total: 0,
     billedMinutes: 0, lines: lines.length, incomplete: 0, withoutTotal: 0,
   };
   for (const l of lines) {
     t.hours  += Number(l.hours_amount ?? 0);
     t.start  += Number(l.start_amount ?? 0);
     t.travel += Number(l.travel_amount ?? 0);
+    t.expenses += Number(l.expenses_amount ?? 0);
     t.urgent += Number(l.urgent_amount ?? 0);
     t.billedMinutes += Number(l.billed_minutes ?? 0);
     if (l.line_total == null) t.withoutTotal += 1;

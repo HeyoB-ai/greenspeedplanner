@@ -50,6 +50,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `025_pharmacy_invoicing.sql` | facturatie: `shift_pharmacies.budgeted_minutes`, `pharmacy_rates`, spoedbedrag op `shifts`, en `invoice_lines()` |
 | `026_invoice_lines_fixes.sql` | `invoice_lines()`: reden-opbouw (`::TEXT`, zie hieronder), en een regel zonder duur krijgt geen bedrag in plaats van nul |
 | `027_declaration_compute_cast.sql` | dezelfde `::TEXT` op de drie vaste zinnen in `declaration_compute()`; alleen een cast, geen gedragswijziging |
+| `028_declaration_expenses.sql` | onkosten bij een declaratie (`declaration_expenses`), doorbelast in `invoice_lines()`; `declaration_by_token()` en `declaration_overview()` krijgen de posten erbij |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -75,6 +76,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `024_pharmacy_city_test.sql` | plaats zetten (getrimd), leeg opslaan wist het veld, onbekende apotheek geeft een fout, en een koerier mag het niet |
 | `026_invoice_lines_fixes_test.sql` | dat een vaste zin als reden terugkomt, dat een dienst zonder duur zichtbaar blijft zonder bedrag, en dat een regel zonder totaal geen losse bedragen houdt |
 | `027_declaration_compute_cast_test.sql` | de drie takken met een vaste zin (geen standplaats, onbekende afstand, dienst zonder apotheek) geven een reden terug, met ongewijzigde uitkomsten |
+| `028_declaration_expenses_test.sql` | posten vastleggen (lege regels vallen weg), terugzien op de invulpagina en in het plannerscherm, naar rato doorbelast, en dicht na goedkeuring |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -441,6 +443,32 @@ Het invoerveld in *Afstanden* wordt na een geslaagde berekening leeggemaakt.
 > invoer (`source = 'manual'`). Structureel oplossen doe je met
 > `scripts/backfill-pharmacy-coords.mjs`, en dat vergt eerst adresgegevens op de
 > apotheek zelf.
+
+### Onkosten
+
+Naast de kilometervergoeding kan een koerier losse posten opgeven: parkeren, een
+veerpont, een OV-kaartje. Meerdere per dienst, met een omschrijving en een bedrag.
+**Bonnetjes gaan buiten het systeem om**, per mail naar de planning — er is geen
+upload.
+
+Die posten staan bewust **los van `declaration_compute()`**. Die functie berekent
+de reiskostenregel met haar vier takken; onkosten worden niet berekend maar
+opgegeven, en er zit geen drempel, geen tarief en geen standplaats aan vast. Ze
+zitten dus ook niet in `computed_reimbursable_km`, anders lopen "wat de regel
+oplevert" en "wat de koerier voorschoot" door elkaar.
+
+Op de factuur worden ze **zonder marge** doorbelast, naar rato van de geplande
+minuten — dezelfde verhouding als de uren en de reiskosten.
+
+> ⚠ **`employmentType` is niet te verifiëren vanuit deze repo.** De markering
+> *bon verwacht* hoort bij koeriers die geen zzp'er zijn, maar dat veld komt hier
+> nergens voor: van `user_profiles` zijn alleen `id`, `name`, `role`,
+> `pharmacy_ids` en `home_pharmacy_id` in gebruik. `declaration_expects_receipt()`
+> leest het daarom via `to_jsonb(up) ->> 'employmentType'`, zodat een ontbrekende
+> kolom NULL oplevert in plaats van een functie die niet aangemaakt kan worden.
+> Bij NULL of leeg wordt er **geen** bon verwacht — liever geen markering dan bij
+> iedereen één. De verificatiequery onderaan migratie 028 laat zien welke waarden
+> er werkelijk in staan; klopt `'zzp'` niet, dan is dat één regel in die functie.
 
 ### Binnen hoeveel uur
 

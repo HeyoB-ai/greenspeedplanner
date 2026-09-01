@@ -56,6 +56,9 @@ interface SubmitBody {
   claims_travel?: unknown;
   own_car_km?: unknown;
   note?: unknown;
+  // Onkosten (migratie 028): omschrijving + bedrag, als tekst zodat een half
+  // getypt getal onderweg niet stilletjes 0 wordt. De database valideert ze.
+  expenses?: unknown;
 }
 
 Deno.serve(async (req) => {
@@ -150,6 +153,20 @@ Deno.serve(async (req) => {
       // ('Vul het aantal gereden kilometers in.'), en die mogen zo naar de pagina.
       console.warn('[declaratie] indienen geweigerd:', error.message);
       return json({ error: error.message }, 400);
+    }
+
+    // Onkosten in een tweede aanroep. Bewust ná het indienen: gaat die stap
+    // mis, dan staan de tijden in elk geval vast en kan de koerier het opnieuw
+    // proberen zonder alles over te typen. Andersom zou een geweigerde
+    // onkostenregel de hele opgave tegenhouden.
+    const expenses = Array.isArray(body.expenses) ? body.expenses : [];
+    const { error: expErr } = await admin.rpc('declaration_set_expenses', {
+      p_token: token,
+      p_expenses: expenses,
+    });
+    if (expErr) {
+      console.warn('[declaratie] onkosten geweigerd:', expErr.message);
+      return json({ error: expErr.message }, 400);
     }
 
     // Na indienen de bijgewerkte stand teruggeven, zodat de pagina kan tonen wat

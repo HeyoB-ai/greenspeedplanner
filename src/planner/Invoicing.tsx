@@ -131,7 +131,7 @@ export default function Invoicing({ onClose }: Props) {
 
           {lines.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[72rem] text-sm">
+              <table className="w-full min-w-[78rem] text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
                     <th className="py-2 pr-3 font-medium">Datum</th>
@@ -147,6 +147,7 @@ export default function Invoicing({ onClose }: Props) {
                     <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[6rem]">Uren (€)</th>
                     <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Start (€)</th>
                     <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Reis (€)</th>
+                    <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[6rem]">Onkosten (€)</th>
                     <th className="py-2 px-3 font-medium text-right whitespace-nowrap min-w-[5.5rem]">Spoed (€)</th>
                     <th className="py-2 pl-3 font-medium text-right whitespace-nowrap min-w-[6.5rem]">Totaal (€)</th>
                   </tr>
@@ -192,6 +193,7 @@ export default function Invoicing({ onClose }: Props) {
                       </td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.start_amount)}</td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.travel_amount)}</td>
+                      <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.expenses_amount)}</td>
                       <td className="py-2 px-3 align-top text-right tabular-nums whitespace-nowrap">{amount(l.urgent_amount)}</td>
                       <td className="py-2 pl-3 align-top text-right tabular-nums whitespace-nowrap font-medium">
                         {amount(l.line_total)}
@@ -209,6 +211,7 @@ export default function Invoicing({ onClose }: Props) {
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.hours)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.start)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.travel)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.expenses)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.urgent)}</td>
                     <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(totals.total)}</td>
                   </tr>
@@ -231,7 +234,13 @@ export default function Invoicing({ onClose }: Props) {
               <p>
                 Het <strong>starttarief</strong> wordt niet verdeeld: elke apotheek in een gedeelde
                 dienst krijgt er een volledige, want voor die apotheek is het een eigen opdracht.
-                <strong> Reiskosten</strong> volgen wél dezelfde verhouding als de uren.
+                <strong> Reiskosten</strong> en <strong>onkosten</strong> volgen wél dezelfde
+                verhouding als de uren.
+              </p>
+              <p>
+                <strong>Onkosten</strong> zijn wat de koerier voorschoot — parkeren, een veerpont, een
+                OV-kaartje — en worden <strong>zonder marge</strong> doorbelast. Ze staan los van de
+                kilometervergoeding.
               </p>
               <p>
                 Bij <strong>spoed</strong> telt alleen het telefonisch afgesproken bedrag — geen uren,

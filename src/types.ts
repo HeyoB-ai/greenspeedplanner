@@ -167,6 +167,8 @@ export interface InvoiceLine {
   hours_amount: number | null;
   start_amount: number | null;
   travel_amount: number | null;
+  // Doorbelaste onkosten, naar rato van de geplande minuten en zonder marge.
+  expenses_amount: number | null;
   urgent_amount: number | null;
   urgent_note: string | null;
   line_total: number | null;
@@ -226,9 +228,22 @@ export interface DeclarationRow {
   hours_after_end: number | null;
   submitted_in_time: boolean | null;
   expected_within_hours: number;
+  // Onkosten die geen kilometervergoeding zijn (migratie 028): parkeren, een
+  // veerpont, een OV-kaartje. expects_receipt is een herinnering dat er nog een
+  // bon per mail moet komen — een signaal, geen blokkade.
+  expenses: DeclarationExpense[];
+  expenses_amount: number;
+  expects_receipt: boolean;
   reviewed_at: string | null;
   reviewer_name: string | null;
   review_note: string | null;
+}
+
+// Eén opgegeven onkostenpost. Het bonnetje zit niet in het systeem: dat gaat
+// per mail naar de planning.
+export interface DeclarationExpense {
+  description: string;
+  amount_eur: number;
 }
 
 // Standplaats en afstandsdekking per koerier (courier_home_overview()).
