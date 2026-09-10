@@ -29,7 +29,7 @@ const SUPABASE_URL     = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const BREVO_API_KEY    = Deno.env.get('BREVO_API_KEY') ?? '';
 const MAIL_FROM        = Deno.env.get('MAIL_FROM') ?? '';
-const MAIL_FROM_NAME   = Deno.env.get('MAIL_FROM_NAME') ?? 'Greenspeed Planning';
+const MAIL_FROM_NAME   = Deno.env.get('MAIL_FROM_NAME') ?? 'GoBob Planning';
 const MAIL_REPLY_TO    = Deno.env.get('MAIL_REPLY_TO') ?? '';
 // Het nummer van de planning, voor de afsluiting van de mail. Leeg is een geldige
 // stand: dan blijft de zin zoals hij was, zonder een gat waar een nummer hoort.

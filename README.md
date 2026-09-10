@@ -228,9 +228,9 @@ opent.
 | Variabele | Standaard | Waarvoor |
 |---|---|---|
 | `BREVO_API_KEY` | — | verplicht, behalve in dry run; type `xkeysib-…` |
-| `MAIL_FROM` | — | afzenderadres, nu `planning@greenspeedkoeriers.nl` (**mét** s) |
-| `MAIL_FROM_NAME` | `Greenspeed Planning` | weergavenaam |
-| `MAIL_REPLY_TO` | — | `info@greenspeedkoerier.nl` (**zonder** s). Hoeft niet geverifieerd te zijn in Brevo — dat geldt alleen voor de afzender |
+| `MAIL_FROM` | — | afzenderadres, `planning@go-bob.nl`. Moet in Brevo geverifieerd zijn; `go-bob.nl` is dat |
+| `MAIL_FROM_NAME` | `GoBob Planning` | weergavenaam |
+| `MAIL_REPLY_TO` | — | `info@go-bob.nl`. Hoeft niet geverifieerd te zijn in Brevo — dat geldt alleen voor de afzender |
 | `PLANNING_PHONE` | — | telefoonnummer van de planning, voor de afsluiting van de mail. Gezet: "Bel de planning: `<nummer>`", in de HTML als `tel:`-link. Leeg: de zin blijft "Bel de planning." zonder nummer — nooit een gat waar een nummer hoort |
 | `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; gevuld = **alleen daarheen** |
 | `MAIL_LIVE` | — | `1` = naar alle koeriers. Zonder allowlist én zonder deze vlag gaat er **niets** uit |
@@ -241,21 +241,20 @@ opent.
 Uitrollen:
 
 ```powershell
-npx supabase secrets set MAIL_FROM=planning@greenspeedkoeriers.nl `
-  MAIL_FROM_NAME="Greenspeed Planning" `
-  MAIL_REPLY_TO=info@greenspeedkoerier.nl `
+npx supabase secrets set MAIL_FROM=planning@go-bob.nl `
+  MAIL_FROM_NAME="GoBob Planning" `
+  MAIL_REPLY_TO=info@go-bob.nl `
   MAIL_ALLOWLIST="jouw@eigenadres.nl"
 npx supabase functions deploy send-shift-mail
 ```
 
-> ⚠️ **Vóór je live gaat: afzender en reply-to op hetzelfde domein zetten.**
-> Nu vertrekt de mail van `planning@greenspeedkoerier**s**.nl` (testdomein, mét s)
-> terwijl antwoorden naar `info@greenspeedkoerier.nl` gaan (echte domein, zónder
-> s). Twee domeinen die één letter schelen, in één bericht — dat is voor een
-> koerier niet te onderscheiden van een phishingpoging, en spamfilters kijken er
-> ook naar. Zolang `MAIL_ALLOWLIST` alleen jouw eigen adres bevat ziet niemand
-> anders het. Zodra `greenspeedkoerier.nl` in Brevo geverifieerd is, zet je
-> `MAIL_FROM` daarheen om en klopt het weer.
+> **Afzender en reply-to staan op hetzelfde domein**, en dat hoort zo te blijven.
+> Eerder vertrok de mail van `planning@greenspeedkoeriers.nl` (mét s) terwijl
+> antwoorden naar `info@greenspeedkoerier.nl` gingen (zónder s): twee domeinen die
+> één letter schelen, in één bericht. Voor een koerier niet te onderscheiden van
+> een phishingpoging, en spamfilters kijken er ook naar. Sinds `go-bob.nl` in
+> Brevo geverifieerd is, staan beide daar. Zet ze bij een volgende verhuizing in
+> dezelfde handeling om, niet los van elkaar.
 
 Proefdraaien — laat per koerier het adres, de berichtsoorten, het onderwerp en de
 volledige tekst zien, zonder iets te claimen of te versturen:
@@ -519,7 +518,7 @@ vrijgegeven worden; het scherm *Meerwerk* zegt dan welke apotheken het betreft.
 ### Uitrollen
 
 ```powershell
-npx supabase secrets set EXTRA_WORK_URL=https://<app>/meerwerk
+npx supabase secrets set EXTRA_WORK_URL=https://planner.go-bob.nl/meerwerk
 npx supabase functions deploy extra-work
 npx supabase functions deploy send-shift-mail    # tweede ronde voor apotheekpost
 ```
@@ -839,19 +838,37 @@ het verzenden gemaakt en bestaat verder alleen in de mail.
 
 | Variabele | Voor | Waarvoor |
 |---|---|---|
-| `DECLARATION_URL` | `send-shift-mail` | basis-URL van de invulpagina, bv. `https://<app>/declaratie`. Ontbreekt hij, dan blijft een nabericht wachten in plaats van met een kapotte link uit te gaan |
-| `DECLARATION_ORIGIN` | beide nieuwe functies | CORS-origin; standaard `*` (er komen geen cookies of sessies aan te pas) |
+| `DECLARATION_URL` | `send-shift-mail` | basis-URL van de invulpagina, `https://planner.go-bob.nl/declaratie`. Ontbreekt hij, dan blijft een nabericht wachten in plaats van met een kapotte link uit te gaan |
+| `DECLARATION_ORIGIN` | `shift-declaration`, `extra-work`, `courier-distances` | CORS-origin; standaard `*` (er komen geen cookies of sessies aan te pas — het token in de URL is het hele bewijs). **Staat bewust nog op `*`**, zie hieronder |
 | `GOOGLE_MAPS_API_KEY` | `courier-distances` | geocoding + Distance Matrix; dezelfde sleutel als het backfill-script |
 
 ### Uitrollen
 
 ```powershell
-npx supabase secrets set DECLARATION_URL=https://<app>/declaratie `
+npx supabase secrets set DECLARATION_URL=https://planner.go-bob.nl/declaratie `
   GOOGLE_MAPS_API_KEY=<google-key>
 npx supabase functions deploy shift-declaration
 npx supabase functions deploy courier-distances
 npx supabase functions deploy send-shift-mail    # uitgebreid met shift_followup
 ```
+
+> **Nog te doen na de eerste geslaagde testmail: `DECLARATION_ORIGIN` dichtzetten.**
+> Hij staat op `*`, en dat is bewust: het dichtzetten raakt drie functies
+> (`shift-declaration`, `extra-work`, `courier-distances`) en midden in een
+> testronde wil je bij een fout weten of het aan de mail ligt en niet aan CORS.
+> Het is wel het juiste einddoel — het app-domein staat nu vast, dus de reden om
+> hem open te laten is verdwenen zodra de keten één keer heeft gewerkt.
+>
+> ```powershell
+> npx supabase secrets set DECLARATION_ORIGIN=https://planner.go-bob.nl
+> npx supabase functions deploy shift-declaration
+> npx supabase functions deploy extra-work
+> npx supabase functions deploy courier-distances
+> ```
+>
+> Alleen doen als de planner-app uitsluitend op dat domein draait. Een
+> Netlify-preview op een ander adres valt er dan buiten.
+
 
 Volgorde, en stap 7 stuurt mail:
 
@@ -1094,3 +1111,4 @@ DELETE FROM public.shift_sms_log WHERE shift_id = '<uuid>';
   tekens speling binnen het eerste segment; vanaf twee namen loopt het richting
   de tweede. De dry run toont per bericht `chars`, `segments` en `encoding`, en
   in de samenvatting `segments_total` — het aantal credits dat die run kost.
+

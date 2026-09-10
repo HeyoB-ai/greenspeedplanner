@@ -403,20 +403,20 @@ niet terug te halen.
 Niet besloten — hier expliciet genoteerd zodat het niet stilzwijgend ingevuld
 wordt tijdens de bouw.
 
-- **Afzenderdomein.** Nu `planning@greenspeedkoeriers.nl` (**mét** s, testdomein,
-  DKIM geverifieerd). Het echte domein is `greenspeedkoerier.nl` (**zónder** s) en
-  moet geverifieerd zijn vóór er naar echte koeriers gemaild wordt. Het adres komt
-  in een secret (`MAIL_FROM` + `MAIL_FROM_NAME`, want Brevo wil de afzender als
-  `{ name, email }`), zodat omzetten geen codewijziging vergt. Overweeg een
-  `MAIL_ALLOWLIST`-secret zolang het testdomein in gebruik is: leeg maken is dan
-  de bewuste stap "we gaan live".
+- ~~**Afzenderdomein.**~~ **Beslist, zie punt 13.** Het staat op `go-bob.nl`, dat in
+  Brevo geverifieerd is. Wat hier stond over het adres in een secret zetten
+  (`MAIL_FROM` + `MAIL_FROM_NAME`, want Brevo wil de afzender als
+  `{ name, email }`) is uitgevoerd en is precies waarom de verhuizing geen
+  codewijziging vergde. Het `MAIL_ALLOWLIST`-secret is er ook gekomen en staat nog
+  aan: leeg maken blijft de bewuste stap "we gaan live".
 - **De berichttekst zelf**, zoals bij de SMS pas aan het eind.
 
 ## 13. Antwoorden gaan naar een postbus die gelezen wordt
 
-`Reply-To` staat op `info@greenspeedkoerier.nl`. Een reply-to hoeft in Brevo niet
-geverifieerd te zijn — dat geldt alleen voor de afzender — dus dit werkt ook zolang
-het echte domein daar nog niet doorheen is.
+`Reply-To` staat op `info@go-bob.nl`, de afzender op `planning@go-bob.nl`. Een
+reply-to hoeft in Brevo niet geverifieerd te zijn — dat geldt alleen voor de
+afzender — maar dat is nu geen uitweg meer die we nodig hebben: `go-bob.nl` is
+geverifieerd, dus beide adressen staan op hetzelfde, geverifieerde domein.
 
 **Waarom dit een beslissing is en geen detail:** anders dan bij de SMS, waar de
 alfanumerieke afzender antwoorden technisch onmogelijk maakt en de tekst dus naar
@@ -426,12 +426,19 @@ niets — precies het bericht waarvoor deze mail bestaat. De afsluiting blijft
 daarnaast staan ("Vragen of verhinderd? Bel de planning"), want bellen is sneller
 dan wachten tot iemand de mailbox leest.
 
-**Openstaand risico tot de omzetting.** De mail vertrekt nu van
-`planning@greenspeedkoeriers.nl` (mét s) terwijl antwoorden naar
-`info@greenspeedkoerier.nl` (zonder s) gaan. Twee domeinen die één letter
+**Opgelost, en het blijft hier staan omdat de val terug kan komen.** Eerder
+vertrok de mail van `planning@greenspeedkoeriers.nl` (mét s) terwijl antwoorden
+naar `info@greenspeedkoerier.nl` (zónder s) gingen. Twee domeinen die één letter
 schelen, in één bericht: voor een ontvanger niet te onderscheiden van een
-phishingpoging. Zolang `MAIL_ALLOWLIST` alleen het eigen adres bevat ziet niemand
-anders het; vóór live gaan moet `MAIL_FROM` mee naar het echte domein.
+phishingpoging, en spamfilters wegen het mee. Het is nooit naar echte koeriers
+uitgegaan — `MAIL_ALLOWLIST` bevatte in die periode alleen het eigen adres.
+
+Sinds `go-bob.nl` in Brevo geverifieerd is, staan afzender én reply-to daar
+(`planning@go-bob.nl` en `info@go-bob.nl`). Dat is geen detail van de configuratie
+maar een eis aan elke volgende verhuizing: **`MAIL_FROM` en `MAIL_REPLY_TO` gaan
+in dezelfde handeling mee, nooit los van elkaar.** Ze los omzetten is precies hoe
+deze situatie is ontstaan — het eerste adres verhuisde naar een domein dat al
+geverifieerd was, het tweede bleef staan.
 
 ## Raakvlak met de SMS-herinnering
 
