@@ -20,12 +20,17 @@ export type Attention = {
   extraWorkDisputed: number;       // waarvan betwist
   disputed: number;                // de twee betwistingen samen
   total: number;
+  // Koeriers zonder rij in courier_contacts (migratie 039). Telt BEWUST niet mee
+  // in total: dat getal voedt de badge op Financieel en gaat over werk waar geld
+  // aan hangt. Een ontbrekend nummer is een gat in de gegevens onder Beheer.
+  couriersWithoutPhone: number;
 };
 
 export const NO_ATTENTION: Attention = {
   declarations: 0, declarationsDisputed: 0,
   extraWork: 0, extraWorkDisputed: 0,
   disputed: 0, total: 0,
+  couriersWithoutPhone: 0,
 };
 
 export async function getAttention(): Promise<Attention> {
@@ -40,6 +45,7 @@ export async function getAttention(): Promise<Attention> {
         declarations_disputed?: number;
         extra_work_to_release: number;
         extra_work_disputed?: number;
+        couriers_without_phone?: number;
         total: number;
       }
     | undefined;
@@ -53,5 +59,8 @@ export async function getAttention(): Promise<Attention> {
     extraWorkDisputed,
     disputed: declarationsDisputed + extraWorkDisputed,
     total: row.total ?? 0,
+    // Ontbreekt de kolom, dan draait migratie 039 nog niet en blijft de badge weg
+    // — zelfde vangnet als bij de betwiste velden uit 034.
+    couriersWithoutPhone: row.couriers_without_phone ?? 0,
   };
 }

@@ -147,9 +147,17 @@ export default function App() {
             <RefreshCw size={15} /> Vernieuwen
           </button>
 
+          {/* De badge op Beheer telt gaten in de gegevens, niet werkvoorraad. Een
+              koerier zonder telefoonnummer valt in twee ketens stil weg — geen
+              dienstherinnering en geen SMS over een openstaande declaratie — en het
+              contactenscherm waarschuwt daar wel voor, maar alleen als je het
+              opent. Vandaar hier, waar de planning toch al langskomt. Amber en niet
+              rood: het is een fout in de invoer, geen openstaand geld. */}
           <MenuButton
             label="Beheer"
             icon={<Settings size={15} />}
+            badge={attention.couriersWithoutPhone}
+            badgeTitle={`${attention.couriersWithoutPhone} koerier(s) zonder telefoonnummer — die krijgen geen SMS`}
             items={[
               {
                 key: 'employees', label: 'Medewerkers', icon: <Users size={15} />,
@@ -169,6 +177,7 @@ export default function App() {
               {
                 key: 'contacts', label: 'Nummers', icon: <Phone size={15} />,
                 title: 'Mobiele nummers van koeriers beheren',
+                badge: attention.couriersWithoutPhone,
                 onSelect: () => setShowContacts(true),
               },
             ]}

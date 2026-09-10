@@ -50,9 +50,17 @@ export default function CourierContacts({ onClose }: Props) {
     () => new Map(contacts.map((c) => [c.courierId, c])), [contacts],
   );
 
-  const missingWithShifts = useMemo(
-    () => couriers.filter((c) => !byCourier.has(c.id) && upcoming.has(c.id)),
-    [couriers, byCourier, upcoming],
+  // Élke koerier zonder nummer, niet alleen wie een aanstaande dienst heeft. Die
+  // beperking maakte hiervan een vangnet voor het eerstvolgende geval, terwijl een
+  // ontbrekend nummer altijd een fout in de gegevens is: zonder nummer krijgt een
+  // koerier geen dienstherinnering én geen herinnering voor zijn nadeclaratie, en
+  // in beide ketens valt hij stil weg.
+  //
+  // Wie er wél een dienst heeft staan, is per regel gemarkeerd met "dienst
+  // gepland" — daar is dit dus urgenter dan administratief.
+  const missingNumber = useMemo(
+    () => couriers.filter((c) => !byCourier.has(c.id)),
+    [couriers, byCourier],
   );
 
   function currentValue(courierId: string): string {
@@ -121,13 +129,15 @@ export default function CourierContacts({ onClose }: Props) {
           {error && <p className="text-sm text-red-600">{error}</p>}
           {loading && <p className="text-sm text-slate-500">Laden…</p>}
 
-          {!loading && missingWithShifts.length > 0 && (
+          {!loading && missingNumber.length > 0 && (
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3">
               <AlertTriangle size={15} className="mt-0.5 shrink-0" />
               <span>
-                {missingWithShifts.length === 1 ? 'Eén koerier heeft' : `${missingWithShifts.length} koeriers hebben`} een
-                bevestigde dienst in de komende twee weken maar géén nummer:{' '}
-                <strong>{missingWithShifts.map((c) => c.name).join(', ')}</strong>. Die {missingWithShifts.length === 1 ? 'krijgt' : 'krijgen'} geen herinnering.
+                {missingNumber.length === 1 ? 'Eén koerier heeft' : `${missingNumber.length} van de ${couriers.length} koeriers hebben`}{' '}
+                géén nummer:{' '}
+                <strong>{missingNumber.map((c) => c.name).join(', ')}</strong>.{' '}
+                {missingNumber.length === 1 ? 'Die krijgt' : 'Die krijgen'} geen SMS — niet vóór een
+                dienst en niet over een openstaande declaratie.
               </span>
             </div>
           )}
