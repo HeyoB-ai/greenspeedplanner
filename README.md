@@ -58,6 +58,8 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `033_planner_attention.sql` | `planner_attention()`: telt wat op de planner wacht, voor de badge op het menu Financieel |
 | `034_attention_disputed.sql` | betwistingen tellen mee in die badge en komen apart terug |
 | `035_zzp_no_travel.sql` | geen kilometervergoeding voor zzp'ers: vijfde tak in `declaration_compute()`, vóór de vier bestaande |
+| `036_declaration_reminders.sql` | invullink van 30 naar 5 dagen (`max_age_days` mee naar 4), berichtsoort `declaration_reminder`, tabel `declaration_reminders` |
+| `037_declaration_reminder_dispatch.sql` | wie er een herinnering krijgt: `declaration_reminder_due()`, `_claim()` (claimt én zet de mail klaar) en `_record()` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -91,6 +93,8 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `033_planner_attention_test.sql` | wat wel en niet meetelt (ingediend wel, openstaand niet; nieuw wel, vrijgegeven niet), het totaal, en dat een koerier nullen krijgt |
 | `034_attention_disputed_test.sql` | betwist telt mee en komt apart terug, goedgekeurd en verlopen niet, en het totaal telt niets dubbel |
 | `035_zzp_no_travel_test.sql` | loondienst onveranderd, zzp zonder bedrag/tarief/markering, eigen auto omzeilt de tak niet, en er gaat niets naar de factuur |
+| `036_declaration_reminders_test.sql` | de twee termijnen en hun verhouding, de nieuwe berichtsoort, de primary key als idempotentie, geen derde stap, en verlopen/terugzetten kennen de nieuwe soort |
+| `037_declaration_reminder_dispatch_test.sql` | alleen `open` en een geldig token, de hoogste stap wint en zakt daarna niet terug, claimen zet de mail klaar mét `shift_date`, en een koerier zonder nummer valt niet weg |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -1112,3 +1116,98 @@ DELETE FROM public.shift_sms_log WHERE shift_id = '<uuid>';
   de tweede. De dry run toont per bericht `chars`, `segments` en `encoding`, en
   in de samenvatting `segments_total` — het aantal credits dat die run kost.
 
+---
+
+## Herinneringen voor openstaande declaraties (fase 10)
+
+Migraties `036` en `037`, Edge Function `send-declaration-reminders`, plus twee
+nieuwe blokken in `send-shift-mail`. De invullink gaat van 30 naar 5 dagen; de
+herinneringen vangen op wat die kortere termijn anders zou kosten.
+
+### Wat er gebeurt
+
+| Moment | Waar het uit komt | Wat er uitgaat |
+|---|---|---|
+| stage 1 | afloop van de dienst + de helft van `expected_within_hours` (nu 24 uur) | SMS **en** mail |
+| stage 2 | het vroegste van 80% van (afloop → `token_expires_at`) en `token_expires_at − 24 uur` | SMS **en** mail, met de vervaldatum nadrukkelijker |
+
+Beide alleen bij `status = 'open'` en een token dat nog niet verlopen is. Nooit
+meer dan twee: de primary key `(declaration_id, stage)` op
+`declaration_reminders` en de `CHECK (stage IN (1, 2))` maken dat een
+schemagarantie, geen afspraak in code.
+
+> ⚠ Met `token_valid_days = 5` wint de ondergrens van 24 uur **altijd** en is de
+> 80%-term nooit werkzaam — het venster is dan hoogstens 120 uur en de 80%-grens
+> valt daarbinnen later dan `verloopt − 24 uur`. De koerier houdt dus precies 24
+> uur over. Wil je meer lucht, dan is dat één getal in punt 1 van migratie 037.
+
+### Geen link in de herinnering, en dat is geen bezuiniging
+
+`declaration_issue_token()` overschrijft `token_hash`. Elk nieuw token maakt de
+vorige link dus dood, en een herinnering met een verse link zou de link in de
+oorspronkelijke uitnodiging slopen — precies bij de koeriers die de herinnering
+moest bereiken. Het oude token is niet terug te halen: in de database staat
+alleen een SHA-256-hash, en de plaintext bestaat na het versturen nergens meer.
+Verwijzen naar dezelfde link kan dus ook niet.
+
+Daarom verwijzen zowel de SMS als de mail naar **de mail die de koerier al
+heeft**, met de datum erbij. `declaration_issue_token()` wordt in deze keten niet
+aangeroepen.
+
+### Omgevingsvariabelen
+
+| Variabele | Standaard | Waarvoor |
+|---|---|---|
+| `BREVO_API_KEY` | — | dezelfde sleutel als de SMS- en mailfunctie |
+| `SMS_SENDER` | `Greenspeed` | alfanumerieke afzender; terug-sms'en kan niet |
+| `REMINDER_MAX_PER_RUN` | `50` | herinneringen per run; het overschot komt de volgende run |
+| `REMINDER_DRY_RUN` | — | `1` = niets claimen, niets versturen, geen mail inschrijven |
+| `CRON_SECRET` | — | indien gezet, verplicht als header `x-cron-secret` |
+
+### Uitrollen
+
+```powershell
+npx supabase functions deploy send-declaration-reminders
+npx supabase functions deploy send-shift-mail    # uitgebreid met declaration_reminder
+```
+
+Proefdraaien — laat per declaratie de stap, het nummer, de tekst en het aantal
+segmenten zien, zonder te claimen, te versturen of een mail in te schrijven:
+
+```powershell
+curl -X POST "https://<project-ref>.supabase.co/functions/v1/send-declaration-reminders?dry_run=1" `
+  -H "Authorization: Bearer <service-role-key>" -H "x-cron-secret: <CRON_SECRET>"
+```
+
+Staat er in de uitkomst een regel met `"to": "(geen nummer)"`, dan mist die
+koerier een rij in `courier_contacts`. Dat is een schoonmaakklus en geen storing:
+de mail gaat wel uit, de SMS niet, en de herinnering wordt vastgelegd als
+`failed` met de reden erbij — zichtbaar in `declaration_reminders`.
+
+### Cron
+
+Vierde schedule naast `mail-sweep`, `mail-send`, `declaration-sweep`,
+`extra-work-sweep` en `sms-dienstherinnering`. Op :35, dus tussen de
+declaratie-sweep (:15) en de mailrondes:
+
+```sql
+SELECT cron.schedule('declaratie-herinnering', '35 * * * *', $$
+  SELECT net.http_post(
+    url     := 'https://<project-ref>.supabase.co/functions/v1/send-declaration-reminders',
+    headers := jsonb_build_object(
+                 'Authorization', 'Bearer <service-role-key>',
+                 'x-cron-secret', '<CRON_SECRET>',
+                 'Content-Type',  'application/json'),
+    body    := '{}'::jsonb
+  );
+$$);
+```
+
+Controleren doe je in `net._http_response`, **niet** in `cron.job_run_details`:
+die laatste zegt alleen of het `http_post`-statement zelf lukte.
+
+> ⚠ **Zet deze cron nog niet aan.** Eerst migratie 036 en 037 draaien (met hun
+> tests), dan de dry run bekijken, en pas daarna aanzetten. Bij de eerste échte
+> run krijgt elke openstaande declaratie waarvan het moment al voorbij is meteen
+> een bericht — en na het inkorten van de termijn in 036 kunnen dat er in één keer
+> een aantal zijn.

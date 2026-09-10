@@ -107,6 +107,10 @@ interface OutboxRow {
     // alleen bij een nabericht (shift_followup)
     declaration_id?: string;
     own_car?: boolean;
+    // alleen bij een herinnering (declaration_reminder)
+    stage?: number;              // 1 = eerste, 2 = laatste
+    expires_at?: string;         // ISO; de mail noemt hier een DATUM van
+    invited_on?: string;         // 'YYYY-MM-DD' — de dag van de uitnodiging
     // alleen bij een meerwerkmelding (extra_work_request)
     extra_work_id?: string;
     pharmacy_name?: string;
@@ -328,6 +332,42 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
       }
       return lines;
     }
+    case 'declaration_reminder': {
+      // Zonder vervaldatum kan de kernzin niet gemaakt worden, en een herinnering
+      // zonder deadline is precies de herinnering die niets doet. Liever geen
+      // bericht dan een half bericht: de rij eindigt dan zichtbaar als mislukt.
+      // In de praktijk zet declaration_reminder_claim() dit veld altijd.
+      if (!p.shift_date || !p.start_time || !p.expires_at) return [];
+      const what = `${dayName(p.weekday ?? 1)} ${fmtDate(p.shift_date)}, ${fmtTime(p.start_time, p.budgeted_end_time)}`
+                 + ` bij ${joinNames(p.pharmacies)}`;
+      const voor = fmtDeadline(p.expires_at);
+
+      const lines: Line[] = [
+        `Je declaratie van ${what} staat nog open: je hebt nog niet doorgegeven hoe lang hij werkelijk duurde.`,
+      ];
+
+      // GEEN LINK EN GEEN KNOP. declaration_issue_token() overschrijft
+      // token_hash, dus een verse link zou de link in de oorspronkelijke
+      // uitnodiging doden — en dan leren we koeriers dat de links van dit systeem
+      // stukgaan, precies bij de groep die we wilden bereiken. Het oude token is
+      // niet terug te halen (er staat alleen een SHA-256-hash in de database),
+      // dus verwijzen naar dezelfde link kan niet. Vandaar de verwijzing naar de
+      // mail die de koerier al heeft.
+      lines.push(p.invited_on
+        ? `De invullink staat in de mail die je op ${fmtDate(p.invited_on)} van ons kreeg.`
+        : 'De invullink staat in onze eerdere mail over deze dienst.');
+
+      // Bij de laatste herinnering mag de vervaldatum nadrukkelijker. Nog steeds
+      // geen aanmaning: wie zich betrapt voelt vult niets meer in, en dan zijn we
+      // de opgave kwijt in plaats van dat hij laat is.
+      if (p.stage === 2) {
+        lines.push(`Dit is de laatste herinnering. Vul hem in voor ${voor} — daarna werkt de link`
+                 + ' niet meer en kunnen we de uren niet meer verwerken.');
+      } else {
+        lines.push(`Vul hem in voor ${voor}.`);
+      }
+      return lines;
+    }
     case 'extra_work_request': {
       // Zonder werkende link heeft dit blok geen zin; het bericht blijft dan
       // wachten in plaats van half uit te gaan.
@@ -360,6 +400,13 @@ function subjectFor(rows: OutboxRow[]): string {
     // Een bundel die alléén uit naberichten bestaat gaat niet over de planning.
     if (rows.every((r) => r.kind === 'shift_followup')) return 'Hoe lang duurden je diensten?';
     if (rows.every((r) => r.kind === 'extra_work_request')) return 'Extra tijd — graag je akkoord';
+    // Een bundel herinneringen gaat over meerdere diensten die allemaal nog open
+    // staan; de datums staan in de tekst, niet in het onderwerp.
+    if (rows.every((r) => r.kind === 'declaration_reminder')) {
+      return rows.some((r) => r.payload?.stage === 2)
+        ? 'Laatste herinnering: je declaraties staan nog open'
+        : 'Je declaraties staan nog open';
+    }
     return 'Je planning is bijgewerkt';
   }
   const row = rows[0];
@@ -380,6 +427,11 @@ function subjectFor(rows: OutboxRow[]): string {
       return when ? `Je dienst van ${when} vervalt` : 'Je dienst vervalt';
     case 'shift_followup':
       return when ? `Hoe lang duurde je dienst van ${when}?` : 'Hoe lang duurde je dienst?';
+    case 'declaration_reminder':
+      if (p.stage === 2) {
+        return when ? `Laatste herinnering: je declaratie van ${when}` : 'Laatste herinnering: je declaratie staat nog open';
+      }
+      return when ? `Je declaratie van ${when} staat nog open` : 'Je declaratie staat nog open';
     case 'extra_work_request':
       return when ? `Extra tijd op ${when} — graag je akkoord` : 'Extra tijd — graag je akkoord';
     default:                   return 'Bericht over je planning';
