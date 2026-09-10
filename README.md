@@ -231,6 +231,7 @@ opent.
 | `MAIL_FROM` | — | afzenderadres, nu `planning@greenspeedkoeriers.nl` (**mét** s) |
 | `MAIL_FROM_NAME` | `Greenspeed Planning` | weergavenaam |
 | `MAIL_REPLY_TO` | — | `info@greenspeedkoerier.nl` (**zonder** s). Hoeft niet geverifieerd te zijn in Brevo — dat geldt alleen voor de afzender |
+| `PLANNING_PHONE` | — | telefoonnummer van de planning, voor de afsluiting van de mail. Gezet: "Bel de planning: `<nummer>`", in de HTML als `tel:`-link. Leeg: de zin blijft "Bel de planning." zonder nummer — nooit een gat waar een nummer hoort |
 | `MAIL_ALLOWLIST` | — | komma-gescheiden adressen; gevuld = **alleen daarheen** |
 | `MAIL_LIVE` | — | `1` = naar alle koeriers. Zonder allowlist én zonder deze vlag gaat er **niets** uit |
 | `MAIL_MAX_PER_RUN` | `25` | koeriers per run; overschot komt de volgende run |

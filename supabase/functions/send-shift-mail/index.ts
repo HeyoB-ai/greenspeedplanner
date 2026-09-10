@@ -31,6 +31,9 @@ const BREVO_API_KEY    = Deno.env.get('BREVO_API_KEY') ?? '';
 const MAIL_FROM        = Deno.env.get('MAIL_FROM') ?? '';
 const MAIL_FROM_NAME   = Deno.env.get('MAIL_FROM_NAME') ?? 'Greenspeed Planning';
 const MAIL_REPLY_TO    = Deno.env.get('MAIL_REPLY_TO') ?? '';
+// Het nummer van de planning, voor de afsluiting van de mail. Leeg is een geldige
+// stand: dan blijft de zin zoals hij was, zonder een gat waar een nummer hoort.
+const PLANNING_PHONE   = Deno.env.get('PLANNING_PHONE') ?? '';
 const CRON_SECRET      = Deno.env.get('CRON_SECRET') ?? '';
 const MAX_PER_RUN      = Number(Deno.env.get('MAIL_MAX_PER_RUN') ?? '25');
 
@@ -117,9 +120,12 @@ interface OutboxRow {
     note?: string;
   };
   created_at: string;
-  // Geen kolom maar een werkveld: de invullink wordt vlak vóór het renderen
+  // Geen kolommen maar werkvelden: de invullink wordt vlak vóór het renderen
   // gemaakt en bestaat alleen tijdens deze run. Zie de hoofdlus.
   link?: string;
+  // De vervaldatum van diezelfde link, zodat de tekst een DATUM kan noemen in
+  // plaats van een aantal dagen. Komt gratis mee uit declaration_issue_token().
+  expiresAt?: string;
 }
 
 // ── Tekst ────────────────────────────────────────────────────────────────
@@ -148,12 +154,36 @@ function todayNL(): string {
   return `${get('day')}-${get('month')}-${get('year')}`;
 }
 
+// De vervaldatum als 'dinsdag 4 augustus'. ALTIJD een datum en nooit een aantal
+// dagen: token_expires_at staat op dienstdatum + token_valid_days om middernacht,
+// dus "over twee dagen" klopt afhankelijk van de starttijd soms wel en soms niet
+// — en te ruim is de verkeerde kant op. Omrekenen naar Nederlandse tijd is nodig
+// omdat de functie in UTC draait; zonder dat valt de datum een dag terug.
+function fmtDeadline(expiresISO: string): string {
+  const parts = new Intl.DateTimeFormat('nl-NL', {
+    timeZone: 'Europe/Amsterdam', weekday: 'long', day: 'numeric', month: 'long',
+  }).formatToParts(new Date(expiresISO));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('weekday')} ${get('day')} ${get('month')}`;
+}
+
 function fmtTime(start: string, end: string | null | undefined): string {
   return end ? `${start}-${end}` : start;
 }
 
 function transportText(mode: string | undefined): string {
   return mode === 'car' ? 'met de auto' : 'met de fiets';
+}
+
+// De voornaam uit een volledige naam: het eerste woord, dezelfde aanpak als
+// DeclarationPage.tsx. Een mail die met "Hoi Hendrick Holthuis" begint leest als
+// een brief van een instantie, en dit is een berichtje van de planning. Bij een
+// naam met een tussenvoegsel vooraan levert dit soms iets korts op; dat is
+// geaccepteerd, want de invulpagina doet het al net zo, en twee plekken die een
+// naam verschillend afkappen is erger dan één die het soms simpel doet.
+// Splitsen op een spatie en niet op een witruimte-regex, exact zoals daar.
+function firstName(full: string): string {
+  return full.trim().split(' ')[0] || full;
 }
 
 function joinNames(names: string[] | undefined): string {
@@ -203,12 +233,23 @@ function variantLines(shifts: PayloadShift[]): string[] {
     + ` bij ${joinNames(v.shift.pharmacies)}, ${transportText(v.shift.transport_mode)}`);
 }
 
+// ── Vorm van een regel ───────────────────────────────────────────────────
+// Tekst, of de invullink. Dat onderscheid bestaat alleen omdat de twee
+// uitvoeringen hem anders tonen: de tekstversie zet de kale URL neer — die moet
+// in élke client klikbaar zijn en is de fallback — en de HTML-versie maakt er een
+// knop van, zonder de URL er nóg eens onder te zetten. De blokken worden één keer
+// opgebouwd, dus de twee vormen kunnen niet uit elkaar lopen.
+type Line = string | { link: string; label: string };
+
 // Eén blok per feit uit de outbox. Zonder aanhef en zonder afsluiting: die zet
 // de bundelaar er één keer om heen.
-// p_expected_hours komt uit declaration_settings (migratie 021) en niet uit een
-// getal hier: de termijn is een instelling, en twee plekken die 48 zeggen lopen
-// vroeg of laat uiteen. Is hij onbekend, dan blijft de zin gewoon weg.
-function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
+// expectedHours komt uit declaration_settings (migratie 021) en niet uit een getal
+// hier: het is een instelling, en twee plekken die 48 zeggen lopen vroeg of laat
+// uiteen. Is hij onbekend, dan blijft die zin weg — nooit een termijn beweren die
+// niet gelezen is. De vervaldatum komt niet uit een instelling maar uit de
+// declaratie zelf (row.expiresAt): een berekening op token_valid_days zou voor een
+// oudere declaratie het verkeerde antwoord geven.
+function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
   const p = row.payload;
   const shifts = p.shifts ?? [];
 
@@ -256,9 +297,9 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
       if (!row.link || !p.shift_date || !p.start_time) return [];
       const what = `${dayName(p.weekday ?? 1)} ${fmtDate(p.shift_date)}, ${fmtTime(p.start_time, p.budgeted_end_time)}`
                  + ` bij ${joinNames(p.pharmacies)}`;
-      const lines = [
+      const lines: Line[] = [
         `Je dienst van ${what} zit erop. Wil je doorgeven hoe lang hij werkelijk duurde?`,
-        row.link,
+        { link: row.link, label: 'Doorgeven hoe lang mijn dienst duurde' },
       ];
       if (p.own_car) {
         // De vraagstelling staat hier en op de pagina in exact dezelfde woorden.
@@ -268,12 +309,22 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
                  + ' vanaf vertrek thuis tot terugkomst thuis.');
       }
       if (expectedHours) {
-        // Nadrukkelijk een verwachting en geen deadline, en de tweede zin is
+        // Nadrukkelijk een verwachting en geen deadline, en de tweede helft is
         // geen beleefdheid: een koerier die denkt dat hij te laat is vult
         // helemaal niets meer in, en dan zijn we de opgave kwijt in plaats van
         // dat hij laat is.
-        lines.push(`Fijn als je dit binnen ${expectedHours} uur na je dienst doorgeeft.`
-                 + ' Later invullen kan ook, de link blijft gewoon werken.');
+        //
+        // EEN DATUM, GEEN AANTAL DAGEN. "tot 5 dagen na je dienst" laat de lezer
+        // zelf tellen, en die telt vanaf vandaag terwijl de termijn vanaf de
+        // DIENSTDATUM loopt — leest hij de mail twee dagen later, dan gokt hij er
+        // twee dagen bij. De datum komt uit token_expires_at van deze ene
+        // declaratie, dus hij kan niet naast de werkelijkheid liggen. Ontbreekt
+        // hij, dan blijft het vaag in plaats van dat er een datum staat die we
+        // niet gecontroleerd hebben.
+        lines.push(`Fijn als je dit binnen ${expectedHours} uur doorgeeft. `
+                 + (row.expiresAt
+                     ? `Later kan ook. De link werkt tot ${fmtDeadline(row.expiresAt)}.`
+                     : 'Later kan ook. De link blijft nog een tijdje werken.'));
       }
       return lines;
     }
@@ -285,7 +336,7 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
       const planned = p.planned_start && p.planned_end
         ? ` (gepland ${p.planned_start}-${p.planned_end})` : '';
       const minutes = Math.round(Number(p.extra_minutes ?? 0));
-      const lines = [
+      const lines: Line[] = [
         `De dienst van ${when}${planned} duurde ${minutes} minuten langer dan gepland.`,
       ];
       if (p.note) lines.push(`Toelichting: ${p.note}`);
@@ -295,7 +346,7 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): string[] {
         // kent, en dat is precies de factuur waar dit NIET op komt.
         lines.push('Deze tijd komt op de factuur van dit filiaal, niet op die van de keten.');
       }
-      lines.push(row.link);
+      lines.push({ link: row.link, label: 'Reageren op de extra tijd' });
       lines.push(`Zonder reactie binnen ${p.respond_hours ?? 48} uur belasten we de extra tijd door.`);
       return lines;
     }
@@ -335,54 +386,242 @@ function subjectFor(rows: OutboxRow[]): string {
   }
 }
 
+// ── HTML ─────────────────────────────────────────────────────────────────
+// Defensief voor Outlook, dat voor mail de Word-renderer gebruikt. Wat die niet
+// kent laat hij zonder foutmelding vallen, dus alles wat de mail leesbaar houdt
+// moet in iets staan dat hij wél begrijpt:
+//   * de opmaak volledig in tabellen — geen flex, geen grid, geen inline-block;
+//   * inline styles, want een <style>-blok wordt gestript;
+//   * een vaste breedte van 600px en geen media queries;
+//   * kleuren die iets dragen ook als attribuut, niet alleen als CSS.
+//
+// De HTML is de nette vorm, niet de enige: de tekstversie blijft volwaardig en is
+// de plek waar de kale URL staat.
+
+const FONT = 'font-family:Arial,Helvetica,sans-serif;';
+const BODY_TEXT = `${FONT}font-size:15px;line-height:22px;color:#334155;`;
+const PARA = `margin:0 0 16px 0;${BODY_TEXT}`;
+
+// Alles uit de payload gaat hierdoor: apotheeknamen en toelichtingen zijn vrije
+// tekst en mogen de opmaak niet kunnen openbreken.
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// De tekstversie van één regel. De link wordt hier de kale URL: die moet in élke
+// client werken, ook waar niets van HTML overblijft.
+function lineText(l: Line): string {
+  return typeof l === 'string' ? l : l.link;
+}
+
+// tel: wil een nummer zonder opmaak; de '+' van de landcode mag blijven staan.
+function telHref(phone: string): string {
+  return phone.replace(/[^\d+]/g, '');
+}
+
+// De afsluiting, in twee vormen. Staat PLANNING_PHONE gezet, dan gaat het nummer
+// mee: in de tekst als tekst — daar valt niets te klikken en dat hoeft ook niet —
+// en in de HTML als tel:-link, zodat een koerier die op straat staat hem indrukt
+// in plaats van hem over te typen. Is de variabele leeg, dan blijft de zin exact
+// zoals hij was; een afsluiting met een gat erin is erger dan geen nummer.
+//
+// De HTML-vorm komt hier al ontsnapt uit en gaat daarom NIET nog een keer door
+// esc(): dat zou de anchor tot letterlijke tekst maken.
+function closingFor(audience: 'courier' | 'pharmacy'): { text: string; html: string } {
+  if (audience === 'pharmacy') {
+    const s = 'Vragen? Bel of mail de planning.';
+    return { text: s, html: esc(s) };
+  }
+  if (!PLANNING_PHONE) {
+    const s = 'Vragen of verhinderd? Bel de planning.';
+    return { text: s, html: esc(s) };
+  }
+  return {
+    text: `Vragen of verhinderd? Bel de planning: ${PLANNING_PHONE}`,
+    html: 'Vragen of verhinderd? Bel de planning: '
+        + `<a href="tel:${esc(telHref(PLANNING_PHONE))}" style="color:#006b5a;text-decoration:underline;">${esc(PLANNING_PHONE)}</a>`,
+  };
+}
+
+// withFallback zet de kale URL eronder. Alleen bij de koeriersmail: een knop kan
+// sneuvelen — een client die achtergronden strijkt, een tekstweergave, een mail
+// die is doorgestuurd — en dan blijft er zonder deze regels niets over om op te
+// klikken. De tekstversie heeft de URL altijd al; dit is de HTML-kant van dezelfde
+// vangnetgedachte.
+//
+// word-break:break-all is geen opsmuk: een token van 64 tekens breekt anders de
+// kolom van 600px open en laat de hele mail schuiven.
+function buttonHtml(l: { link: string; label: string }, withFallback: boolean): string {
+  const GREY = `${FONT}font-size:12px;line-height:18px;color:#64748b;`;
+  const table = [
+    `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 ${withFallback ? '10' : '16'}px 0;">`,
+    '  <tr>',
+    `    <td bgcolor="#006b5a" align="center" style="background-color:#006b5a;border-radius:4px;padding:13px 22px;${FONT}font-size:15px;font-weight:bold;color:#ffffff;">`,
+    `      <a href="${esc(l.link)}" style="${FONT}font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">${esc(l.label)}</a>`,
+    '    </td>',
+    '  </tr>',
+    '</table>',
+  ].join('\n');
+
+  if (!withFallback) return table;
+
+  return [
+    table,
+    `<p style="margin:0 0 2px 0;${GREY}">Werkt de knop niet? Gebruik deze link:</p>`,
+    `<p style="margin:0 0 16px 0;${GREY}word-break:break-all;">`
+      + `<a href="${esc(l.link)}" style="${GREY}word-break:break-all;">${esc(l.link)}</a></p>`,
+  ].join('\n');
+}
+
+// Eén blok als HTML. Regels binnen een blok horen bij elkaar en worden met
+// <br /> gescheiden; een volgend blok begint een nieuwe alinea — dezelfde
+// indeling als de tekstversie, die blokken met een lege regel scheidt.
+//
+// Een opsommingsregel houdt zijn streepje als bullet in plaats van een <ul> te
+// worden: op lijsten zet de Word-renderer eigen marges die met inline CSS niet te
+// overrulen zijn, en dan staat de halve mail scheef.
+function blockHtml(block: Line[], withFallback: boolean): string {
+  const out: string[] = [];
+  let para: string[] = [];
+
+  const flush = () => {
+    if (para.length === 0) return;
+    out.push(`<p style="${PARA}">${para.join('<br />')}</p>`);
+    para = [];
+  };
+
+  for (const l of block) {
+    if (typeof l === 'string') {
+      para.push(l.startsWith('- ') ? `&#8226;&nbsp;${esc(l.slice(2))}` : esc(l));
+    } else {
+      // De knop staat op eigen hoogte, dus de alinea ervoor gaat eerst dicht.
+      flush();
+      out.push(buttonHtml(l, withFallback));
+    }
+  }
+  flush();
+  return out.join('\n');
+}
+
+// Het omhulsel. Twee tabellen: de buitenste vult de breedte en centreert, de
+// binnenste is de kolom van 600px. Een margin:0 auto op die kolom doet in Outlook
+// niets, vandaar align="center" op de cel eromheen.
+//
+// closingHtml komt al ontsnapt binnen (zie closingFor) omdat er een tel:-link in
+// kan zitten; alle andere tekst gaat hier wél nog door esc().
+function renderHtml(
+  blocks: Line[][], greeting: string, stand: string | null, closingHtml: string,
+  subject: string, withFallback: boolean,
+): string {
+  const head = [`<p style="${PARA}">${esc(greeting)}</p>`];
+  if (stand) head.push(`<p style="${PARA}">${esc(stand)}</p>`);
+
+  return [
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">',
+    '<html xmlns="http://www.w3.org/1999/xhtml">',
+    '<head>',
+    '<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />',
+    `<title>${esc(subject)}</title>`,
+    '</head>',
+    '<body style="margin:0;padding:0;background-color:#f1f5f9;">',
+    // bgcolor als ATTRIBUUT naast de CSS, om dezelfde reden als bij de knop:
+    // alleen de CSS wordt gestript. Zonder dit valt de mail terug op de
+    // achtergrond die de client zelf kiest, en dan staat de witte kaart hieronder
+    // op wit en verdwijnt de omlijsting.
+    '<table role="presentation" bgcolor="#f1f5f9" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background-color:#f1f5f9;">',
+    '  <tr>',
+    '    <td align="center" style="padding:24px 12px;">',
+    '      <table role="presentation" bgcolor="#ffffff" border="0" cellpadding="0" cellspacing="0" width="600" style="width:600px;border-collapse:collapse;background-color:#ffffff;">',
+    '        <tr>',
+    `          <td style="padding:24px;${BODY_TEXT}">`,
+    ...head,
+    blocks.map((b) => blockHtml(b, withFallback)).join('\n'),
+    `<p style="margin:0;${BODY_TEXT}">${closingHtml}</p>`,
+    '          </td>',
+    '        </tr>',
+    '      </table>',
+    '    </td>',
+    '  </tr>',
+    '</table>',
+    '</body>',
+    '</html>',
+  ].join('\n');
+}
+
 // De volledige mail. Feiten in de volgorde waarin ze ontstonden: bij een
 // verzetting staat "vervalt" dan boven "je staat nu op", zoals het gebeurd is.
 //
-// Bovenaan staat een PEILDATUM, en dat is geen opsmuk. Alles onder die regel is
-// een momentopname, en daarmee permanent waar: verandert er later iets zonder dat
-// het een bericht oplevert — wat kan, want de vingerafdruk kent geen datums — dan
-// is deze mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
-// en het is de enige manier om ook het rommelige geval te dekken waarin twee
-// tijden door elkaar heen lopen.
+// De PEILDATUM bovenaan is geen opsmuk, maar hij is niet voor elke mail nodig:
+//   * Bij een planningsblok is alles onder die regel een momentopname, en de
+//     regel maakt hem permanent waar. Verandert er later iets zonder dat het een
+//     bericht oplevert — wat kan, want de vingerafdruk kent geen datums — dan is
+//     zo'n mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
+//     en het is de enige manier om ook het rommelige geval te dekken waarin twee
+//     tijden door elkaar heen lopen.
+//   * Een nabericht gaat over één dienst die al voorbij is. Daar valt niets meer
+//     aan te verschuiven, dus daar voegt de regel niets toe en staat hij alleen
+//     maar in de weg.
+// Vandaar: weg zodra de bundel uitsluitend uit naberichten bestaat, en anders
+// blijft hij staan. Eén planningsblok in de bundel is genoeg om hem te houden.
+//
+// Tekst en HTML komen uit dezelfde blokken. Twee losse templates zouden na de
+// eerste tekstwijziging al uit elkaar lopen, en dan leest de ene helft van de
+// koeriers iets anders dan de andere helft.
 function renderMail(
   rows: OutboxRow[], name: string, expectedHours: number | null,
   audience: 'courier' | 'pharmacy' = 'courier',
-): { subject: string; text: string } | null {
-  const blocks = rows
+): { subject: string; text: string; html: string } | null {
+  // Kind en regels bij elkaar houden: de peildatum hangt af van wat er
+  // daadwerkelijk in de mail komt, niet van wat er in de bundel zat. Een rij die
+  // geen inhoud oplevert valt hier weg en mag de aanhef dus ook niet bepalen.
+  const rendered = rows
     .slice()
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-    .map((r) => renderBlock(r, expectedHours))
-    .filter((b) => b.length > 0);
+    .map((r) => ({ kind: r.kind, lines: renderBlock(r, expectedHours) }))
+    .filter((x) => x.lines.length > 0);
 
-  if (blocks.length === 0) return null;
+  if (rendered.length === 0) return null;
 
-  const body = blocks.map((b) => b.join('\n')).join('\n\n');
+  const blocks = rendered.map((x) => x.lines);
+  const subject = subjectFor(rows);
+  const stand = rendered.every((x) => x.kind === 'shift_followup')
+    ? null
+    : `Stand op ${todayNL()}:`;
   // Een apotheek is geen koerier: andere aanhef, en de afsluiting gaat niet
   // over verhinderd zijn maar over de vraag die er ligt.
-  if (audience === 'pharmacy') {
-    return {
-      subject: subjectFor(rows),
-      text: `Beste ${name},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
-          + `Vragen? Bel of mail de planning.\n`,
-    };
-  }
+  // Bij een apotheek blijft de hele naam staan: dat is geen persoon maar een zaak.
+  const greeting = audience === 'pharmacy' ? `Beste ${name},` : `Hoi ${firstName(name)},`;
+  const closing = closingFor(audience);
+
+  const body = blocks.map((b) => b.map(lineText).join('\n')).join('\n\n');
+  const head = stand ? `${greeting}\n\n${stand}` : greeting;
 
   return {
-    subject: subjectFor(rows),
-    text: `Hoi ${name},\n\nStand op ${todayNL()}:\n\n${body}\n\n`
-        + `Vragen of verhinderd? Bel de planning.\n`,
+    subject,
+    text: `${head}\n\n${body}\n\n${closing.text}\n`,
+    // De kale URL onder de knop alleen voor koeriers. Een apotheek krijgt de
+    // meerwerkvraag, en daar is de knop de hele boodschap.
+    html: renderHtml(blocks, greeting, stand, closing.html, subject, audience === 'courier'),
   };
 }
 
 // ── Brevo ────────────────────────────────────────────────────────────────
+// Tekst én HTML mee, zodat Brevo er een multipart/alternative van maakt. De
+// tekstversie is geen restant: hij is wat een client zonder HTML toont, en de
+// enige plek waar de invul-URL uitgeschreven staat.
 async function sendMail(
-  to: string, toName: string, subject: string, text: string,
+  to: string, toName: string, subject: string, text: string, html: string,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
   const body: Record<string, unknown> = {
     sender: { name: MAIL_FROM_NAME, email: MAIL_FROM },
     to: [{ email: to, name: toName }],
     subject,
     textContent: text,
+    htmlContent: html,
     tags: ['dienstbevestiging'],
   };
   if (MAIL_REPLY_TO) body.replyTo = { email: MAIL_REPLY_TO };
@@ -457,6 +696,7 @@ Deno.serve(async (req) => {
   const { data: expectedRaw, error: expHourErr } = await admin.rpc('declaration_expected_hours');
   const expectedHours: number | null = expHourErr ? null : (Number(expectedRaw) || null);
   if (expHourErr) console.error('[mail] termijn ophalen mislukt:', expHourErr.message);
+
 
   // Meerwerk waar de apotheek niet binnen de termijn op gereageerd heeft. Dit
   // hoort bij het verzendmoment: de klok loopt vanaf het versturen, dus de
@@ -549,6 +789,13 @@ Deno.serve(async (req) => {
       if (dryRun) {
         // Uitgeven is een schrijfactie en zou de vorige link ongeldig maken.
         r.link = `${DECLARATION_URL}?t=<token wordt pas bij echt verzenden gemaakt>`;
+        // De vervaldatum wél echt ophalen: die staat in de declaratie en is geen
+        // schrijfactie. Zonder dit zou juist de deadline-zin in een dry run
+        // terugvallen op de vage vorm, en dat is precies de zin die je wil kunnen
+        // nalezen voordat er iets uitgaat.
+        const { data: dec } = await admin.from('shift_declarations')
+          .select('token_expires_at').eq('id', decId).maybeSingle();
+        r.expiresAt = dec?.token_expires_at ?? undefined;
         continue;
       }
 
@@ -563,6 +810,11 @@ Deno.serve(async (req) => {
         continue;
       }
       r.link = `${DECLARATION_URL}?t=${issued.token}`;
+      // declaration_issue_token() geeft expires_at gratis mee (migratie 019,
+      // punt 6). Die is gezaghebbend voor déze declaratie — een berekening op
+      // token_valid_days zou voor een oudere declaratie iets anders opleveren dan
+      // wat er werkelijk in de rij staat.
+      r.expiresAt = issued.expires_at ?? undefined;
     }
 
     // 3c. Naberichten zonder link teruggeven aan de wachtrij.
@@ -605,7 +857,7 @@ Deno.serve(async (req) => {
         courier: courierName, to: address, source: recip?.source,
         would_send: gate.send, blocked_by: gate.reason,
         items: rows.length, kinds: rows.map((r) => r.kind),
-        subject: mail.subject, text: mail.text,
+        subject: mail.subject, text: mail.text, html: mail.html,
       });
       continue;
     }
@@ -613,7 +865,7 @@ Deno.serve(async (req) => {
     // 5. Versturen en 6. vastleggen.
     let outcome: { ok: boolean; id?: string; error?: string };
     try {
-      outcome = await sendMail(address, courierName, mail.subject, mail.text);
+      outcome = await sendMail(address, courierName, mail.subject, mail.text, mail.html);
     } catch (e) {
       outcome = { ok: false, error: `Netwerkfout: ${e instanceof Error ? e.message : String(e)}` };
     }
@@ -733,14 +985,14 @@ Deno.serve(async (req) => {
       results.push({
         to: d.recipient, would_send: gate.send, blocked_by: gate.reason,
         items: rows.length, kinds: rows.map((r) => r.kind),
-        subject: mail.subject, text: mail.text,
+        subject: mail.subject, text: mail.text, html: mail.html,
       });
       continue;
     }
 
     let outcome: { ok: boolean; id?: string; error?: string };
     try {
-      outcome = await sendMail(d.recipient, toName, mail.subject, mail.text);
+      outcome = await sendMail(d.recipient, toName, mail.subject, mail.text, mail.html);
     } catch (e) {
       outcome = { ok: false, error: `Netwerkfout: ${e instanceof Error ? e.message : String(e)}` };
     }
