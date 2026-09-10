@@ -62,6 +62,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `037_declaration_reminder_dispatch.sql` | wie er een herinnering krijgt: `declaration_reminder_due()`, `_claim()` (claimt én zet de mail klaar) en `_record()` |
 | `038_planning_mail_expiry.sql` | `mail_expire_stale_planning()`: planningsberichten vervallen zodra de dienst begonnen is of de afspraak afgelopen — `shift_cancelled` bewust niet |
 | `039_attention_missing_phone.sql` | koeriers zonder telefoonnummer als kolom in `planner_attention()`; telt bewust niet mee in `total` |
+| `040_capture_dashboard_drift.sql` | legt drie via het dashboard aangemaakte functies + triggers vast: `shifts_no_past_insert`, `block_role_change`, `block_pharmacy_delete_with_packages`. Verandert niets aan het gedrag |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -1251,3 +1252,89 @@ Beheer, zodat het opvalt zonder dat iemand dat scherm hoeft te openen.
 uitnodigen vragen en meesturen, zodat `courier_contacts` gevuld raakt op het moment
 dat de koerier binnenkomt. Zolang dat niet gebeurt, blijft dit een handmatige stap
 en blijft de badge het enige wat eraan herinnert.
+
+---
+
+## Drift: wat er in de database staat maar niet in de migraties stond
+
+Een vergelijking van `pg_proc` en `pg_trigger` met wat `supabase/migrations/`
+aanmaakt (10-09-2026, 79 functies en 11 niet-interne triggers live) leverde zes
+verweesde functies en drie verweesde triggers op. Ze zijn via het Supabase-
+dashboard aangemaakt — kleine letters, geen `SET search_path`, niet de vorm die
+elke functie uit deze pijplijn heeft.
+
+**Waarom dat duur was:** een trigger grijpt in zonder dat iemand hem aanroept. Wie
+de repo leest, ziet hem niet. `shifts_no_past_insert` heeft twee testbestanden
+gekost voordat iemand hem tegenkwam.
+
+**Migratie 040 legt de drie vast die bij dit project horen.** Aan het gedrag
+verandert niets: de bodies zijn letterlijk overgenomen, `SECURITY DEFINER` staat
+per functie zoals hij live staat, en een trigger die al bestaat wordt **niet**
+aangeraakt — de migratie meldt zijn live-vorm zodat je die kunt vergelijken.
+
+| Object | Tabel | Wat het doet |
+|---|---|---|
+| `shifts_no_past_insert` | `shifts` | weigert een INSERT met een datum vóór vandaag. Alleen op INSERT en alleen op de datum — daarom werkt `declaration_sweep()` wél: een afgelopen dienst bestaat nooit als INSERT |
+| `block_role_change` | `user_profiles` | alleen een superuser mag een rol wijzigen. Slaat de controle over als `auth.uid()` NULL is (service-role of databasefunctie) — nodig omdat `handle_new_user()` de eerste rol zonder sessie zet |
+| `block_pharmacy_delete_with_packages` | `pharmacies` | weigert het verwijderen van een apotheek met pakketten. ⚠ leest `public.packages` van de **route planner**; verdwijnt die tabel, dan breekt het verwijderen hier |
+
+**Drie wezen horen niet hier maar in de bezorg-app** en staan bewust niet in 040:
+`get_invitation()`, `accept_invitation()` en `link_courier_via_code()`. Ze worden al
+beschreven in migratie 002, 008 en 014, en 014 heeft er een runtime-controle op die
+een `WARNING` geeft als `get_invitation()` ontbreekt of geen `SECURITY DEFINER` is.
+
+**Zo controleer je het opnieuw** — de query die dit aan het licht bracht:
+
+```sql
+SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.prokind = 'f' ORDER BY 1;
+
+SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid)
+FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND NOT t.tgisinternal ORDER BY 1, 2;
+```
+
+`on_auth_user_created` staat op **`auth.users`** en valt buiten een `public`-query;
+die controleer je apart met `tgrelid = 'auth.users'::regclass`. Hij bestaat en staat
+aan (`tgenabled = 'O'`).
+
+## ⛔ Migratie 029 is bewust NIET uitgevoerd
+
+`029_employees.sql` staat in de repo maar is nooit gedraaid. Dat is een besluit, geen
+achterstand — laat hem staan zoals hij staat.
+
+**Hoe je het ziet:** de vijf functies `employee_active_on`, `employee_import`,
+`employee_link_profile`, `employee_save` en `employees_touch` bestaan niet in de
+database, en de tabel `public.employees` ook niet.
+
+**Wat er daardoor niet werkt:** het scherm **Beheer → Medewerkers** toont een
+laadfout. `employeeService.ts` leest de view `employees_active` en roept
+`employee_save`, `employee_link_profile` en `employee_import` aan; alle vier bestaan
+niet. De app crasht niet — `Employees.tsx` vangt de fout op — maar er komt geen
+lijst. Daarnaast heeft `declaration_employment_type()` (migratie 035) geen tweede
+bron en valt hij altijd terug op `user_profiles.employmentType`.
+
+**Waarom we hem niet draaien.** Draaien is *veilig* — 029 raakt niets buiten zijn
+eigen familie: geen `ALTER TABLE` op een bestaande tabel, geen `CREATE OR REPLACE`
+van een functie die al bestond, en van 030–039 noemt alleen 035 het woord
+`employees`, met een `to_regclass`-poort eromheen. Maar veilig is niet hetzelfde als
+nuttig:
+
+* **De seed levert 5 rijen op, niet 69.** Hij selecteert
+  `FROM user_profiles WHERE role = 'courier'` — de inlogaccounts. De 69 rijen uit het
+  commentaar zijn de personeelsadministratie die via `employee_import` (CSV) zou
+  binnenkomen. Zonder die import krijg je een leeg formulier met vijf namen.
+* **De seed vult geen telefoonnummers.** `employees.phone` staat niet in de
+  kolomlijst en `user_profiles` heeft geen telefoonveld. Draaien helpt dus niets
+  tegen de ontbrekende nummers; die blijven handwerk.
+* **Vanaf dat moment is `employees.employment_type` de bron van het dienstverband**
+  en overstemt hij `user_profiles.employmentType`. Op dag één is de uitkomst
+  identiek — de seed kopieert dat veld en 035 overschrijft alleen als er werkelijk
+  iets staat — maar vanaf de eerste wijziging in het scherm lopen de twee bronnen
+  uiteen, zonder dat iemand in de bezorg-app dat merkt.
+
+**Draai hem dus pas als de personeelsadministratie er echt in gaat**, met de
+CSV-import in dezelfde beweging, en met het besluit dat `employees` vanaf dan de
+bron van het dienstverband is. Draai hem **niet** om de migratielijst compleet te
+maken: dan haal je een tweede bron van waarheid binnen waar niemand op stuurt.
