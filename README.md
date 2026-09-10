@@ -60,6 +60,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `035_zzp_no_travel.sql` | geen kilometervergoeding voor zzp'ers: vijfde tak in `declaration_compute()`, vóór de vier bestaande |
 | `036_declaration_reminders.sql` | invullink van 30 naar 5 dagen (`max_age_days` mee naar 4), berichtsoort `declaration_reminder`, tabel `declaration_reminders` |
 | `037_declaration_reminder_dispatch.sql` | wie er een herinnering krijgt: `declaration_reminder_due()`, `_claim()` (claimt én zet de mail klaar) en `_record()` |
+| `038_planning_mail_expiry.sql` | `mail_expire_stale_planning()`: planningsberichten vervallen zodra de dienst begonnen is of de afspraak afgelopen — `shift_cancelled` bewust niet |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -95,6 +96,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `035_zzp_no_travel_test.sql` | loondienst onveranderd, zzp zonder bedrag/tarief/markering, eigen auto omzeilt de tak niet, en er gaat niets naar de factuur |
 | `036_declaration_reminders_test.sql` | de twee termijnen en hun verhouding, de nieuwe berichtsoort, de primary key als idempotentie, geen derde stap, en verlopen/terugzetten kennen de nieuwe soort |
 | `037_declaration_reminder_dispatch_test.sql` | alleen `open` en een geldig token, de hoogste stap wint en zakt daarna niet terug, claimen zet de mail klaar mét `shift_date`, en een koerier zonder nummer valt niet weg |
+| `038_planning_mail_expiry_test.sql` | begonnen diensten vervallen mét reden, toekomstige blijven, `shift_cancelled` blijft altijd, een afspraak vervalt alleen met verstreken einddatum, en een lege lijst blijft |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 

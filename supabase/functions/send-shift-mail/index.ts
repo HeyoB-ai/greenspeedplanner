@@ -395,8 +395,22 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
   }
 }
 
+// Welke soorten om een HANDELING van de lezer vragen. De rest meldt alleen iets.
+// Dat onderscheid bepaalt het onderwerp van een gemengde bundel: een koerier die
+// "Je planning is bijgewerkt" leest, ziet niet dat er ook iets van hem gevraagd
+// wordt, en juist die vraag is de reden dat de mail bestaat.
+const ASKS_SOMETHING = new Set(['shift_followup', 'declaration_reminder', 'extra_work_request']);
+
 function subjectFor(rows: OutboxRow[]): string {
   if (rows.length > 1) {
+    // Zit er een vraag tussen mededelingen, dan is die vraag het onderwerp.
+    // Opnieuw door dezelfde functie, met alléén de vragende rijen: dan komt de
+    // datumopmaak van hieronder er gratis bij, en is er geen tweede plek waar een
+    // onderwerp wordt samengesteld. Dit kan niet blijven doorlopen — binnen die
+    // selectie vraagt élke rij om een handeling, dus de voorwaarde is dan onwaar.
+    const asks = rows.filter((r) => ASKS_SOMETHING.has(r.kind));
+    if (asks.length > 0 && asks.length < rows.length) return subjectFor(asks);
+
     // Een bundel die alléén uit naberichten bestaat gaat niet over de planning.
     if (rows.every((r) => r.kind === 'shift_followup')) return 'Hoe lang duurden je diensten?';
     if (rows.every((r) => r.kind === 'extra_work_request')) return 'Extra tijd — graag je akkoord';
@@ -406,6 +420,13 @@ function subjectFor(rows: OutboxRow[]): string {
       return rows.some((r) => r.payload?.stage === 2)
         ? 'Laatste herinnering: je declaraties staan nog open'
         : 'Je declaraties staan nog open';
+    }
+    // Een nabericht én een herinnering in dezelfde bundel: twee soorten, maar voor
+    // de lezer één vraag. Zonder deze regel zou de selectie hierboven uitkomen op
+    // "Je planning is bijgewerkt" — een onderwerp over planning terwijl er geen
+    // planningsbericht meer in de bundel zit.
+    if (rows.every((r) => r.kind === 'shift_followup' || r.kind === 'declaration_reminder')) {
+      return 'Je declaraties staan nog open';
     }
     return 'Je planning is bijgewerkt';
   }
@@ -740,6 +761,21 @@ Deno.serve(async (req) => {
     console.error('[mail] leeftijdscontrole mislukt:', expErr.message);
   } else if ((expired ?? 0) > 0) {
     console.warn(`[mail] ${expired} nabericht(en) vervallen: de dienst is te lang geleden.`);
+  }
+
+  // Dezelfde controle voor de planningsberichten (migratie 038). Apart gehouden en
+  // niet samengevoegd met de vorige: die meet in max_age_days, deze in de
+  // starttijd van de dienst. Eén functie met twee maatstaven zou achteraf niet
+  // laten zien waaróm een rij is afgesloten.
+  //
+  // shift_cancelled valt er bewust buiten en gaat dus altijd uit, hoe oud ook:
+  // dat bericht is het bewijs dát er afgemeld is, en een koerier die niets hoort
+  // over een geannuleerde dienst gaat er misschien alsnog heen.
+  const { data: staleplan, error: planErr } = await admin.rpc('mail_expire_stale_planning');
+  if (planErr) {
+    console.error('[mail] leeftijdscontrole planning mislukt:', planErr.message);
+  } else if ((staleplan ?? 0) > 0) {
+    console.warn(`[mail] ${staleplan} planningsbericht(en) vervallen: de dienst is al begonnen of de afspraak is afgelopen.`);
   }
 
   // De termijn voor het nabericht, één keer per run. Mislukt dat, dan gaat de
