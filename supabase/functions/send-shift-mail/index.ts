@@ -353,18 +353,31 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
       // niet terug te halen (er staat alleen een SHA-256-hash in de database),
       // dus verwijzen naar dezelfde link kan niet. Vandaar de verwijzing naar de
       // mail die de koerier al heeft.
-      lines.push(p.invited_on
-        ? `De invullink staat in de mail die je op ${fmtDate(p.invited_on)} van ons kreeg.`
-        : 'De invullink staat in onze eerdere mail over deze dienst.');
-
-      // Bij de laatste herinnering mag de vervaldatum nadrukkelijker. Nog steeds
-      // geen aanmaning: wie zich betrapt voelt vult niets meer in, en dan zijn we
-      // de opgave kwijt in plaats van dat hij laat is.
-      if (p.stage === 2) {
-        lines.push(`Dit is de laatste herinnering. Vul hem in voor ${voor} — daarna werkt de link`
-                 + ' niet meer en kunnen we de uren niet meer verwerken.');
+      // Sinds migratie 041 komt invited_on uit mail_outbox.sent_at, dus gevuld
+      // betekent "die mail is werkelijk bezorgd". Is hij leeg, dan is de uitnodiging
+      // nooit aangekomen — een Brevo-fout die niet opnieuw wordt aangeboden, een
+      // geblokkeerde poort, een ontbrekend adres.
+      //
+      // De twee takken hieronder moeten HELEMAAL uit elkaar blijven, ook de
+      // deadline-regel. "Er is geen invullink" gevolgd door "Vul hem in voor
+      // maandag" is tegenstrijdig, en bij de laatste herinnering zou er staan dat
+      // "de link niet meer werkt" terwijl er nooit een link was. De vervaldatum
+      // blijft in beide takken staan: die komt uit token_expires_at en is altijd
+      // waar, ook als niemand hem via een link kan halen.
+      if (p.invited_on) {
+        lines.push(`De invullink staat in de mail die je op ${fmtDate(p.invited_on)} van ons kreeg.`);
+        lines.push(p.stage === 2
+          ? `Dit is de laatste herinnering. Vul hem in voor ${voor} — daarna werkt de link`
+            + ' niet meer en kunnen we de uren niet meer verwerken.'
+          : `Vul hem in voor ${voor}.`);
       } else {
-        lines.push(`Vul hem in voor ${voor}.`);
+        // Er is geen link te geven: het token bestaat alleen in die ene mail die
+        // niet is aangekomen, en de herinnering geeft bewust geen nieuw token uit.
+        lines.push('Er is geen invullink bij je aangekomen, dus zelf invullen kan niet.');
+        lines.push(p.stage === 2
+          ? `Dit is de laatste herinnering. Bel de planning om je uren door te geven voor ${voor}`
+            + ' — daarna kunnen we ze niet meer verwerken.'
+          : `Bel de planning om je uren door te geven, dat kan tot ${voor}.`);
       }
       return lines;
     }

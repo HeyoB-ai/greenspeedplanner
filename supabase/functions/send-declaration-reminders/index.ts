@@ -57,7 +57,9 @@ interface DueReminder {
   start_time: string;
   budgeted_end_time: string | null;
   pharmacy_names: string[];
-  invited_on: string;               // 'YYYY-MM-DD' — de dag van de uitnodiging
+  // 'YYYY-MM-DD' — de dag waarop de uitnodiging is BEZORGD (mail_outbox.sent_at).
+  // NULL betekent: nooit bezorgd. Dan verwijst het bericht niet naar een mail.
+  invited_on: string | null;
   expires_at: string;               // ISO, timestamptz
   due_at: string;
 }
@@ -80,18 +82,31 @@ interface DueReminder {
 //     daarom waar je wél terecht kunt.
 function buildMessage(r: DueReminder): string {
   const dienst = `${shortDay(r.shift_date)} ${dayMonth(r.shift_date)}`;
-  const mail = dayMonth(r.invited_on);
   const voor = deadline(r.expires_at);
+
+  // Is de uitnodiging nooit bezorgd, dan mag er niet naar verwezen worden. Dat
+  // gebeurt vaker dan je denkt: een Brevo-fout zet de rij op 'failed' en die wordt
+  // NOOIT opnieuw aangeboden, en een geblokkeerde poort of een ontbrekend adres
+  // laat hem op 'pending' staan tot max_age_days hem opruimt.
+  //
+  // Het bericht gaat wél uit. De opgave is nodig ongeacht waarom de mail niet
+  // aankwam, en een koerier die niets hoort vult niets in — dan heb je precies het
+  // gokprobleem waar deze keten voor is gebouwd. Alleen wijst de tekst dan naar de
+  // planning in plaats van naar een bericht dat niet bestaat.
+  const invullen = r.invited_on
+    ? `Vul hem in via de mail van ${dayMonth(r.invited_on)}`
+    : 'Bel de planning om hem door te geven';
 
   if (r.stage === 2) {
     return toGsm7(
       `Laatste herinnering: je declaratie van ${dienst} staat nog open. `
-      + `Vul hem in via de mail van ${mail}, voor ${voor}. Daarna kan het niet meer`,
+      + `${invullen}, voor ${voor}. Daarna kan het niet meer`,
     );
   }
   return toGsm7(
     `Je declaratie van ${dienst} staat nog open. `
-    + `Vul hem in via de mail van ${mail}, voor ${voor}. Vragen? Bel de planning`,
+    + `${invullen}, voor ${voor}.`
+    + (r.invited_on ? ' Vragen? Bel de planning' : ''),
   );
 }
 
@@ -223,7 +238,14 @@ Deno.serve(async (req) => {
 
   const due = (data ?? []) as DueReminder[];
   const results: Array<Record<string, unknown>> = [];
-  let sent = 0, failed = 0, skipped = 0, noPhone = 0, mailsQueued = 0;
+  let sent = 0, failed = 0, skipped = 0, mailsQueued = 0;
+
+  // Deze twee komen uit de RIJEN en niet uit het verzendpad, want anders betekenen
+  // ze in een dry run iets anders dan in een echte run: de dry-run-tak hieronder
+  // springt over het hele verzendpad heen en zou de tellers dus altijd op nul
+  // laten. Een nul die je leest als "er is niets mis" is erger dan geen getal.
+  const zonderNummer      = due.filter((r) => !r.phone_e164).length;
+  const zonderUitnodiging = due.filter((r) => !r.invited_on).length;
 
   for (const r of due) {
     const content = buildMessage(r);
@@ -238,6 +260,10 @@ Deno.serve(async (req) => {
         shift_date: r.shift_date,
         due_at: r.due_at,
         expires_at: r.expires_at,
+        uitnodiging_bezorgd_op: r.invited_on ?? '(nooit bezorgd)',
+        // Een geslaagde claim schrijft altijd precies één mail in de outbox, dus in
+        // een dry run staat vast wat er zou gebeuren.
+        zou_mail_inschrijven: true,
         chars: info.chars,
         segments: info.segments,
         encoding: info.unicode ? 'unicode (70/67 per segment)' : 'gsm-7 (160/153 per segment)',
@@ -276,7 +302,6 @@ Deno.serve(async (req) => {
         `[herinnering] ${r.courier_name} (${r.courier_id}): geen telefoonnummer in `
         + `courier_contacts — geen SMS. De mail gaat wel uit. Vul het nummer aan.`,
       );
-      noPhone++;
       await admin.rpc('declaration_reminder_record', {
         p_declaration_id: r.declaration_id, p_stage: r.stage, p_ok: false,
         p_message_id: null, p_error: 'geen telefoonnummer bij deze koerier',
@@ -326,8 +351,16 @@ Deno.serve(async (req) => {
     skipped,
     // Apart geteld: dit is geen storing maar ontbrekende invoer, en het hoort in
     // het weekoverzicht van wie de nummers beheert.
-    zonder_nummer: noPhone,
-    mails_queued: mailsQueued,
+    zonder_nummer: zonderNummer,
+    // Herinneringen waarvan de UITNODIGING nooit is bezorgd. Die gaan wel uit, met
+    // een tekst die niet naar een mail verwijst — maar het getal hoort zichtbaar te
+    // zijn, want het meet een haperende mailketen en geen koeriersprobleem.
+    zonder_uitnodiging: zonderUitnodiging,
+    // Twee namen in plaats van één getal met twee betekenissen: wat er werkelijk is
+    // ingeschreven, of wat er zou worden ingeschreven. In de andere stand ontbreekt
+    // het veld liever dan dat er een nul staat die als "er gaat geen mail uit" leest.
+    mails_queued:          dryRun ? undefined : mailsQueued,
+    mails_zou_inschrijven: dryRun ? due.length : undefined,
     // Elk segment is een credit; bij tweesegmentsberichten wijkt dit af van het
     // aantal berichten.
     segments_total: dryRun

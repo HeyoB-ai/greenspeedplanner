@@ -63,6 +63,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `038_planning_mail_expiry.sql` | `mail_expire_stale_planning()`: planningsberichten vervallen zodra de dienst begonnen is of de afspraak afgelopen — `shift_cancelled` bewust niet |
 | `039_attention_missing_phone.sql` | koeriers zonder telefoonnummer als kolom in `planner_attention()`; telt bewust niet mee in `total` |
 | `040_capture_dashboard_drift.sql` | legt drie via het dashboard aangemaakte functies + triggers vast: `shifts_no_past_insert`, `block_role_change`, `block_pharmacy_delete_with_packages`. Verandert niets aan het gedrag |
+| `041_reminder_invited_on_sent_at.sql` | `invited_on` in de herinnering komt uit `mail_outbox.sent_at` en niet uit `created_at`; is de uitnodiging nooit bezorgd, dan beweert de tekst geen datum |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
