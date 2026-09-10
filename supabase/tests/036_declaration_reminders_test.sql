@@ -10,6 +10,22 @@
 --
 -- Er blijft niets staan: één transactie die op ROLLBACK eindigt.
 --
+-- ⚠ DE PROEFDIENST STAAT OP VANDAAG, NIET IN HET VERLEDEN
+--   Op public.shifts zit een trigger shifts_no_past_insert() die een INSERT met
+--   een datum in het verleden weigert ("Een dienst kan niet op een datum in het
+--   verleden worden ingepland"). Die trigger staat in geen enkele migratie — hij
+--   is rechtstreeks in de database aangemaakt.
+--
+--   Er omheen werken zou de test waardeloos maken, en het is ook niet nodig: in
+--   de praktijk BESTAAT een afgelopen dienst nooit als INSERT. Hij wordt vooruit
+--   ingepland en wordt daarna vanzelf verleden tijd; declaration_sweep() kijkt
+--   met declaration_shift_end(...) < now() naar rijen die er al stonden. Een
+--   dienst van vandaag is dus de eerlijke nabootsing.
+--
+--   Deze test heeft niet nodig dat de dienst al is afgelopen — hij gaat over de
+--   instellingen, de berichtsoort en de logtabel. Alleen de vervaldatum wordt
+--   uit de dienstdatum afgeleid, en die moet met de invoer kloppen.
+--
 -- De test meet in VERSCHILLEN ten opzichte van de beginstand. De database is
 -- gedeeld en er staan al declaraties en berichten in; een test die absolute
 -- getallen verwacht zou morgen falen zonder dat er iets stuk is.
@@ -43,6 +59,8 @@ DECLARE
   v_out_nodat UUID;
   v_n         INT;
   v_status    TEXT;
+  -- Vandaag, niet gisteren: zie de toelichting bovenaan over shifts_no_past_insert().
+  v_day       DATE := current_date;
 BEGIN
   -- ── Opzet ──────────────────────────────────────────────────────────────
   -- De instellingen eerst: de proefdeclaratie hieronder moet dezelfde termijn
@@ -57,14 +75,14 @@ BEGIN
 
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
                              budgeted_end_time, status, transport_mode)
-  VALUES (v_courier, 'regular', current_date - 1, '08:00', '12:00', 'planned', 'bike')
+  VALUES (v_courier, 'regular', v_day, '08:00', '12:00', 'planned', 'bike')
   RETURNING id INTO v_shift;
   INSERT INTO public.shift_pharmacies (shift_id, pharmacy_id) VALUES (v_shift, v_home);
 
   INSERT INTO public.shift_declarations (shift_id, courier_id, token_hash, token_expires_at)
   VALUES (v_shift, v_courier,
           public.declaration_hash_token(public.declaration_new_token()),
-          ((current_date - 1) + v_cfg.token_valid_days)::TIMESTAMP AT TIME ZONE 'Europe/Amsterdam')
+          (v_day + v_cfg.token_valid_days)::TIMESTAMP AT TIME ZONE 'Europe/Amsterdam')
   RETURNING id INTO v_dec;
 
   -- ── 1. De twee termijnen ───────────────────────────────────────────────
@@ -87,7 +105,7 @@ BEGIN
   INSERT INTO public.mail_outbox (courier_id, kind, subject_type, subject_id, payload)
   VALUES (v_courier, 'declaration_reminder', 'shift', v_shift,
           jsonb_build_object('declaration_id', v_dec,
-                             'shift_date', (current_date - 1)::TEXT))
+                             'shift_date', v_day::TEXT))
   RETURNING id INTO v_out_new;
 
   IF v_out_new IS NULL THEN
@@ -157,7 +175,7 @@ BEGIN
 
   SELECT status INTO v_status FROM public.mail_outbox WHERE id = v_out_new;
   IF v_status <> 'pending' THEN
-    RAISE EXCEPTION 'GEVAL 5 GEFAALD: een herinnering van gisteren staat op %, verwacht pending — '
+    RAISE EXCEPTION 'GEVAL 5 GEFAALD: een herinnering van vandaag staat op %, verwacht pending — '
                     'de leeftijdscontrole ruimt te veel op.', v_status;
   END IF;
 

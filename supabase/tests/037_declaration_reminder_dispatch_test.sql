@@ -9,13 +9,36 @@
 --   Wel een melding   → GEFAALD; de tekst noemt het geval en wat er misging.
 --
 -- Er blijft niets staan: één transactie die op ROLLBACK eindigt. Dat geldt ook
--- voor de DELETE op courier_contacts in geval 6 — die rolt gewoon mee terug.
+-- voor de DELETE op courier_contacts in geval 6 en voor de instelling die hieronder
+-- tijdelijk wordt bijgezet — allebei rollen ze gewoon mee terug.
 --
--- OPSTELLING — vier declaraties, elk voor een eigen dienst:
---   A  open,      dienst 2 dagen terug, verloopt over 3 dagen  → stage 1 opeisbaar
---   B  open,      dienst 6 dagen terug, verloopt over 12 uur   → beide opeisbaar
---   C  submitted, verder gelijk aan A                          → mag niet mee
---   D  open,      token al verlopen                            → mag niet mee
+-- ⚠ DE DIENSTEN STAAN OP VANDAAG, EN DE TERMIJN GAAT OMLAAG
+--   Op public.shifts zit een trigger shifts_no_past_insert() die een INSERT met
+--   een datum in het verleden weigert. Die trigger staat in geen enkele migratie —
+--   hij is rechtstreeks in de database aangemaakt.
+--
+--   Er omheen werken zou de test waardeloos maken. Het is ook niet nodig: in de
+--   praktijk BESTAAT een afgelopen dienst nooit als INSERT. Hij wordt vooruit
+--   ingepland en wordt daarna vanzelf verleden tijd. Deze test bootst dat na met
+--   diensten van VANDAAG die vroeg op de dag al zijn afgelopen.
+--
+--   Maar stage 1 valt op "afloop + de helft van expected_within_hours", en met de
+--   standaard van 48 uur ligt dat morgen. Daarom zet de test expected_within_hours
+--   tijdelijk op 1 uur: dan is stage 1 een half uur na afloop opeisbaar en past het
+--   binnen dezelfde dag. Dat is geen omweg maar precies wat migratie 037 belooft —
+--   dat de momenten uit de database komen en niet uit een getal in code. Zou dat
+--   niet zo zijn, dan faalt deze test. Migratie 019 en 021 doen in hun tests
+--   hetzelfde met deze tabel.
+--
+--   GEVOLG: draai deze test NIET tussen 00:00 en 01:00 Nederlandse tijd. Dan zijn
+--   de momenten van vandaag nog niet verstreken en klopt de opzet niet. De test
+--   stopt in dat geval met een duidelijke melding in plaats van te falen.
+--
+-- OPSTELLING — vier declaraties, elk voor een eigen dienst van vandaag:
+--   A  open,      dienst 00:00-00:05, verloopt over 3 dagen  → alleen stage 1
+--   B  open,      dienst 00:05-00:10, verloopt over 12 uur   → beide, dus stage 2
+--   C  submitted, dienst 00:10-00:15                         → mag niet mee
+--   D  open,      dienst 00:15-00:20, token al verlopen      → mag niet mee
 --
 -- WAT DE TEST DEKT
 --   1. Een openstaande declaratie waarvan het moment voorbij is komt terug,
@@ -43,7 +66,20 @@ DECLARE
   v_n       INT;
   v_row     RECORD;
   v_payload JSONB;
+  -- Vandaag, niet in het verleden: zie de toelichting bovenaan.
+  v_day     DATE := current_date;
 BEGIN
+  -- De momenten van vandaag moeten verstreken zijn, anders meet de test niets.
+  IF (now() AT TIME ZONE 'Europe/Amsterdam')::TIME < TIME '01:00' THEN
+    RAISE EXCEPTION 'OPZET: het is nu % in Nederland. Deze test heeft diensten van '
+                    'vroeg vandaag nodig die al zijn afgelopen; draai hem na 01:00.',
+                    to_char((now() AT TIME ZONE 'Europe/Amsterdam')::TIME, 'HH24:MI');
+  END IF;
+
+  -- De termijn tijdelijk naar 1 uur, zodat stage 1 een half uur na afloop
+  -- opeisbaar is in plaats van over 24 uur. Rolt mee terug met de transactie.
+  UPDATE public.declaration_settings SET expected_within_hours = 1 WHERE id;
+
   -- ── Opzet ──────────────────────────────────────────────────────────────
   SELECT id INTO v_courier FROM public.user_profiles WHERE role = 'courier' ORDER BY id LIMIT 1;
   IF v_courier IS NULL THEN RAISE EXCEPTION 'OPZET: geen koerier in user_profiles.'; END IF;
@@ -52,24 +88,24 @@ BEGIN
 
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
                              budgeted_end_time, status, transport_mode)
-  VALUES (v_courier, 'regular', current_date - 2, '08:00', '12:00', 'planned', 'bike')
+  VALUES (v_courier, 'regular', v_day, '00:00', '00:05', 'planned', 'bike')
   RETURNING id INTO v_sa;
   INSERT INTO public.shift_pharmacies (shift_id, pharmacy_id) VALUES (v_sa, v_home);
 
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
                              budgeted_end_time, status, transport_mode)
-  VALUES (v_courier, 'regular', current_date - 6, '08:00', '12:00', 'planned', 'bike')
+  VALUES (v_courier, 'regular', v_day, '00:05', '00:10', 'planned', 'bike')
   RETURNING id INTO v_sb;
   INSERT INTO public.shift_pharmacies (shift_id, pharmacy_id) VALUES (v_sb, v_home);
 
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
                              budgeted_end_time, status, transport_mode)
-  VALUES (v_courier, 'regular', current_date - 3, '08:00', '12:00', 'planned', 'bike')
+  VALUES (v_courier, 'regular', v_day, '00:10', '00:15', 'planned', 'bike')
   RETURNING id INTO v_sc;
 
   INSERT INTO public.shifts (courier_id, shift_type, shift_date, start_time,
                              budgeted_end_time, status, transport_mode)
-  VALUES (v_courier, 'regular', current_date - 4, '08:00', '12:00', 'planned', 'bike')
+  VALUES (v_courier, 'regular', v_day, '00:15', '00:20', 'planned', 'bike')
   RETURNING id INTO v_sd;
 
   -- De vervaldatums worden hier expliciet gezet en niet uit de instelling
