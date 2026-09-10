@@ -16,6 +16,19 @@
 -- Deze test raakt public.shifts niet aan en heeft dus niets te maken met de
 -- trigger shifts_no_past_insert() waar 036 en 037 op struikelden.
 --
+-- ⚠ DE TEST SIMULEERT EERST EEN PLANNERSESSIE
+--   planner_attention() is SECURITY DEFINER en heeft in elke tak de voorwaarde
+--   public.is_privileged(). Die functie kijkt naar auth.uid(), en in de SQL Editor
+--   is die leeg — dus zonder voorbereiding geeft de functie nullen terug en zou de
+--   test op zijn eigen afscherming struikelen in plaats van op de telling. Dat is
+--   precies waarop tests/039 faalde.
+--
+--   Oplossing is het patroon uit de tests van 033 en 034: request.jwt.claim.sub en
+--   request.jwt.claims zetten met set_config(..., true), zodat auth.uid() de id van
+--   een planner teruggeeft. is_local = true, dus het geldt alleen binnen deze
+--   transactie en verdwijnt met de ROLLBACK. Beide instellingen worden gezet omdat
+--   auth.uid() ze in die volgorde probeert.
+--
 -- WAT DE TEST DEKT
 --   1. Beide kolommen kloppen met de rechtstreekse telling
 --   2. Een failed-rij verhoogt mail_failed met 1 en mail_expired niet
@@ -24,12 +37,15 @@
 --   5. Een pending- en een sending-rij tellen NIET mee; 'sending' hoort er
 --      buiten te blijven omdat hij tijdens elke run legitiem voorkomt
 --   6. De vier bestaande kolommen en couriers_without_phone blijven ongemoeid
+--   7. De afscherming werkt: een koerierssessie krijgt nullen te zien in plaats
+--      van de werkvoorraad van de planner
 -- ════════════════════════════════════════════════════════════════════════
 
 BEGIN;
 
 DO $$
 DECLARE
+  v_planner UUID;
   v_courier UUID;
   v_start   RECORD;
   v_now     RECORD;
@@ -38,6 +54,20 @@ DECLARE
 BEGIN
   SELECT id INTO v_courier FROM public.user_profiles WHERE role = 'courier' ORDER BY id LIMIT 1;
   IF v_courier IS NULL THEN RAISE EXCEPTION 'OPZET: geen koerier in user_profiles.'; END IF;
+
+  -- Zonder deze twee regels geeft is_privileged() false en dus alles nul; zie de kop.
+  SELECT id INTO v_planner FROM public.user_profiles
+   WHERE role IN ('superuser', 'supervisor', 'admin') ORDER BY id LIMIT 1;
+  IF v_planner IS NULL THEN RAISE EXCEPTION 'OPZET: geen planner in user_profiles.'; END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_planner::text, true);
+  PERFORM set_config('request.jwt.claims',
+                     json_build_object('sub', v_planner, 'role', 'authenticated')::text, true);
+
+  IF NOT public.is_privileged() THEN
+    RAISE EXCEPTION 'OPZET: is_privileged() geeft nog false na het zetten van de '
+                    'jwt-claims. Zonder plannersessie meet deze test niets.';
+  END IF;
 
   SELECT * INTO v_start FROM public.planner_attention();
 
@@ -123,7 +153,26 @@ BEGIN
                     'alleen post is toegevoegd.';
   END IF;
 
-  RAISE NOTICE 'Alle 6 gevallen geslaagd.';
+  -- ── 7. De afscherming ──────────────────────────────────────────────────
+  -- Omschakelen naar een koerierssessie. Zonder de is_privileged()-voorwaarde in
+  -- elke tak zou een koerier hier kunnen zien hoeveel post er is vastgelopen.
+  PERFORM set_config('request.jwt.claim.sub', v_courier::text, true);
+  PERFORM set_config('request.jwt.claims',
+                     json_build_object('sub', v_courier, 'role', 'authenticated')::text, true);
+
+  IF public.is_privileged() THEN
+    RAISE EXCEPTION 'OPZET: is_privileged() geeft true onder een koerierssessie. Geval 7 '
+                    'meet dan niets — controleer de rol van %.', v_courier;
+  END IF;
+
+  SELECT * INTO v_now FROM public.planner_attention();
+  IF v_now.mail_failed <> 0 OR v_now.mail_expired <> 0 OR v_now.total <> 0 THEN
+    RAISE EXCEPTION 'GEVAL 7 GEFAALD: een koerierssessie ziet mail_failed = %, mail_expired = % '
+                    'en total = %, verwacht drie nullen.',
+                    v_now.mail_failed, v_now.mail_expired, v_now.total;
+  END IF;
+
+  RAISE NOTICE 'Alle 7 gevallen geslaagd.';
 END $$;
 
 -- ────────────────────────────────────────────────────────────────────────

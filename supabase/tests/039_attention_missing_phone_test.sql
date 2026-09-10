@@ -15,18 +15,37 @@
 -- én zonder nummer in; een test die absolute getallen verwacht zou morgen falen
 -- zonder dat er iets stuk is.
 --
+-- ⚠ DE TEST SIMULEERT EERST EEN PLANNERSESSIE
+--   planner_attention() is SECURITY DEFINER en heeft in elke tak de voorwaarde
+--   public.is_privileged(). Die functie kijkt naar auth.uid(), en in de SQL Editor
+--   is die leeg — dus zonder voorbereiding geeft de functie nullen terug en zou de
+--   test op zijn eigen afscherming struikelen in plaats van op de telling.
+--
+--   Oplossing is het patroon uit de tests van 033 en 034: request.jwt.claim.sub en
+--   request.jwt.claims zetten met set_config(..., true), zodat auth.uid() de id van
+--   een planner teruggeeft. is_local = true, dus het geldt alleen binnen deze
+--   transactie en verdwijnt met de ROLLBACK. Beide instellingen worden gezet omdat
+--   auth.uid() ze in die volgorde probeert.
+--
 -- WAT DE TEST DEKT
 --   1. De kolom bestaat en klopt met de rechtstreekse telling
 --   2. Een nummer weghalen laat de telling met precies 1 stijgen
 --   3. Een nummer terugzetten laat hem met precies 1 dalen
 --   4. total verandert NIET mee — de badge op Financieel gaat over geld
 --   5. De vier bestaande kolommen tellen nog zoals in 033/034
+--   6. De afscherming werkt: een koerierssessie krijgt nullen te zien in plaats
+--      van de werkvoorraad van de planner
 -- ════════════════════════════════════════════════════════════════════════
 
 BEGIN;
 
 DO $$
 DECLARE
+  v_planner UUID;
+  -- Een willekeurige koerier voor geval 6. Bewust een andere variabele dan
+  -- v_courier: die laatste is alleen gevuld als er een koerier MET een nummer is,
+  -- en geval 6 moet ook lopen als er niemand een nummer heeft.
+  v_guard   UUID;
   v_courier UUID;
   v_phone   TEXT;
   v_note    TEXT;
@@ -35,6 +54,20 @@ DECLARE
   v_now     RECORD;
   v_direct  INT;
 BEGIN
+  -- Zonder deze twee regels geeft is_privileged() false en dus alles nul; zie de kop.
+  SELECT id INTO v_planner FROM public.user_profiles
+   WHERE role IN ('superuser', 'supervisor', 'admin') ORDER BY id LIMIT 1;
+  IF v_planner IS NULL THEN RAISE EXCEPTION 'OPZET: geen planner in user_profiles.'; END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_planner::text, true);
+  PERFORM set_config('request.jwt.claims',
+                     json_build_object('sub', v_planner, 'role', 'authenticated')::text, true);
+
+  IF NOT public.is_privileged() THEN
+    RAISE EXCEPTION 'OPZET: is_privileged() geeft nog false na het zetten van de '
+                    'jwt-claims. Zonder plannersessie meet deze test niets.';
+  END IF;
+
   SELECT * INTO v_start FROM public.planner_attention();
 
   -- ── 1. De kolom klopt met de rechtstreekse telling ─────────────────────
@@ -105,6 +138,29 @@ BEGIN
   IF v_now.total <> v_now.declarations_to_review + v_now.extra_work_to_release THEN
     RAISE EXCEPTION 'GEVAL 5 GEFAALD: total (%) is niet de som van declaraties (%) en meerwerk (%).',
                     v_now.total, v_now.declarations_to_review, v_now.extra_work_to_release;
+  END IF;
+
+  -- ── 6. De afscherming ──────────────────────────────────────────────────
+  -- Omschakelen naar een koerierssessie. planner_attention() is SECURITY DEFINER,
+  -- dus zonder de is_privileged()-voorwaarde in elke tak zou een koerier hier de
+  -- werkvoorraad van de planner kunnen uitlezen — en sinds 039 ook hoeveel
+  -- collega's er geen nummer hebben.
+  SELECT id INTO v_guard FROM public.user_profiles WHERE role = 'courier' ORDER BY id LIMIT 1;
+  IF v_guard IS NULL THEN RAISE EXCEPTION 'OPZET: geen koerier in user_profiles.'; END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_guard::text, true);
+  PERFORM set_config('request.jwt.claims',
+                     json_build_object('sub', v_guard, 'role', 'authenticated')::text, true);
+
+  IF public.is_privileged() THEN
+    RAISE EXCEPTION 'OPZET: is_privileged() geeft true onder een koerierssessie. Geval 6 '
+                    'meet dan niets — controleer de rol van %.', v_guard;
+  END IF;
+
+  SELECT * INTO v_now FROM public.planner_attention();
+  IF v_now.couriers_without_phone <> 0 OR v_now.total <> 0 THEN
+    RAISE EXCEPTION 'GEVAL 6 GEFAALD: een koerierssessie ziet couriers_without_phone = % en '
+                    'total = %, verwacht 0 en 0.', v_now.couriers_without_phone, v_now.total;
   END IF;
 
   RAISE NOTICE 'Alle gevallen geslaagd (2 en 3 mogelijk overgeslagen, zie eventuele NOTICE).';
