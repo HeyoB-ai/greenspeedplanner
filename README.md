@@ -64,6 +64,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `039_attention_missing_phone.sql` | koeriers zonder telefoonnummer als kolom in `planner_attention()`; telt bewust niet mee in `total` |
 | `040_capture_dashboard_drift.sql` | legt drie via het dashboard aangemaakte functies + triggers vast: `shifts_no_past_insert`, `block_role_change`, `block_pharmacy_delete_with_packages`. Verandert niets aan het gedrag |
 | `041_reminder_invited_on_sent_at.sql` | `invited_on` in de herinnering komt uit `mail_outbox.sent_at` en niet uit `created_at`; is de uitnodiging nooit bezorgd, dan beweert de tekst geen datum |
+| `042_attention_stuck_mail.sql` | `mail_failed` en `mail_expired` als twee losse kolommen in `planner_attention()`; ook buiten `total` |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -101,6 +102,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `037_declaration_reminder_dispatch_test.sql` | alleen `open` en een geldig token, de hoogste stap wint en zakt daarna niet terug, claimen zet de mail klaar mét `shift_date`, en een koerier zonder nummer valt niet weg |
 | `038_planning_mail_expiry_test.sql` | begonnen diensten vervallen mét reden, toekomstige blijven, `shift_cancelled` blijft altijd, een afspraak vervalt alleen met verstreken einddatum, en een lege lijst blijft |
 | `039_attention_missing_phone_test.sql` | de telling klopt met de rechtstreekse query, beweegt mee als een nummer weggaat of terugkomt, en `total` blijft er buiten |
+| `042_attention_stuck_mail_test.sql` | beide tellers kloppen en bewegen los van elkaar, `pending` en `sending` tellen niet mee, en `total` blijft er buiten |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -1339,3 +1341,94 @@ nuttig:
 CSV-import in dezelfde beweging, en met het besluit dat `employees` vanaf dan de
 bron van het dienstverband is. Draai hem **niet** om de migratielijst compleet te
 maken: dan haal je een tweede bron van waarheid binnen waar niemand op stuurt.
+
+---
+
+## Vastgelopen post: eerst zichtbaar, herkansen pas als het nodig blijkt
+
+**Een mislukte verzending wordt nooit opnieuw aangeboden.** `mail_pending_couriers()`
+en `mail_claim_for_courier()` (migratie 017) pakken alleen `pending`; de twee
+functies die iets terugzetten — `declaration_release()` en `mail_release()` —
+filteren op `sending`. Er is geen pogingenteller, en `declaration_expire_stale()`
+raakt alleen `pending`. Een `failed`-rij blijft dus voor altijd staan. `expired`
+idem.
+
+Dat is een bewuste keuze en de reden staat sinds migratie 012 opgeschreven, voor de
+SMS:
+
+> *"Een 'failed'-rij blijft staan en blokkeert dus verdere pogingen. Bewust: een
+> automatische herkansing kan niet zien of een time-out 'niet verstuurd' of 'wél
+> verstuurd, antwoord kwijt' betekende."*
+
+**Migratie 042 maakt het zichtbaar** met twee losse kolommen in
+`planner_attention()`, getoond als amberkleurige balk onder de menubalk. Twee
+getallen en niet één, want de verhouding is de diagnose:
+
+| | Betekenis | Waar kijk je |
+|---|---|---|
+| veel `expired`, geen `failed` | er is nooit iets geprobeerd | `MAIL_ALLOWLIST`, `MAIL_LIVE`, adressen, `DECLARATION_URL` |
+| geen `expired`, veel `failed` | geprobeerd en geweigerd | `mail_outbox.error` |
+| beide | twee problemen tegelijk | begin bij `failed` |
+
+`sending` telt bewust niet mee: tijdens elke verzendronde staan er legitiem rijen op
+die status. Gevolg om te kennen — een rij die **permanent** op `sending` blijft staan
+(het proces stierf tussen claimen en versturen) blijft daarmee onzichtbaar. Dat is
+fail-closed en bewust, maar het is geen nul.
+
+### Het voorstel voor een herkansing — nog NIET gebouwd
+
+Bouw dit pas als de balk laat zien dat er werkelijk `Brevo 429` of `Brevo 5xx` in
+`mail_outbox.error` staat. Query 3 onderaan migratie 042 groepeert precies daarop.
+Staat er alleen `niet op MAIL_ALLOWLIST` of een 4xx, dan is herkansen zinloos en
+moet eerst de configuratie kloppen — dat was in september 2026 het geval.
+
+Een kolom `attempts INT NOT NULL DEFAULT 0` op `mail_outbox`, en een functie die een
+`failed`-rij terugzet op `pending` onder **drie** voorwaarden:
+
+1. **De fout bewijst dat er niets is verstuurd.** Alleen als `error` begint met
+   `Brevo 408`, `Brevo 429` of `Brevo 5`.
+2. **`attempts < 3`.** Daarna moet een mens kijken. Is Brevo een uur onbereikbaar,
+   dan is het bericht meestal niet meer de moeite; `max_age_days` vangt de rest.
+3. **`claimed_at` is ouder dan een kwartier.** Met `mail-send` elke vijf minuten
+   geeft dat ongeveer drie pogingen over een half uur, zonder een eigen planner.
+
+**Waarom `Netwerkfout:` erbuiten blijft.** Dat is het ambigue geval: de aanroep is
+weg maar het antwoord kwam nooit terug, dus de mail kán zijn aangekomen. Herkansen
+levert dan een dubbele mail bij de koerier op, en dat is duurder dan een gemiste die
+je in de outbox ziet staan. Precies het argument van migratie 012.
+
+**Waarom een 4xx erbuiten blijft.** Een 400, 401 of 403 is configuratie: een
+ongeverifieerd afzenderdomein, een verkeerde sleutel, een ongeldig adres. Dat lost
+zichzelf niet op, en drie herkansingen verbergen het alleen — precies het tegendeel
+van wat 042 beoogt.
+
+**Waarom het bij mail zwaarder weegt dan bij de SMS.** Twee verschillen.
+`mail_claim_for_courier()` claimt álle wachtende berichten van een koerier in één
+keer en legt één uitkomst op de hele bundel, dus één `429` sluit een stápel
+berichten permanent af — bij de SMS is het één bericht per rij. En sinds migratie
+037/041 leunt de herinneringsketen erop: een permanent mislukte uitnodiging betekent
+dat de koerier voortaan telefonisch moet doorgeven.
+
+## Waarom een herinnering nooit een nieuw token uitgeeft — ook niet als dat gratis is
+
+`declaration_issue_token()` overschrijft `token_hash`, dus een nieuw token maakt de
+vorige link dood. Daarom geeft de herinneringsketen er geen uit: dat zou de link in
+de oorspronkelijke uitnodiging slopen, precies bij de koeriers die de herinnering
+moest bereiken.
+
+**Er is één geval waarin dat argument niet opgaat.** Is de uitnodiging *nooit
+bezorgd* — `mail_outbox.sent_at IS NULL`, wat sinds migratie 041 exact bekend is —
+dan is er geen levende link om stuk te maken. Een nieuw token zou daar dus gratis
+zijn, en de herinnering zou een werkende link kunnen dragen in plaats van de koerier
+naar de telefoon te sturen.
+
+**Toch gebeurt dat niet, en dat is een besluit.** Het is één uitzondering die de
+keten ingewikkelder maakt — een tweede tokenpad met een eigen voorwaarde, dat je bij
+elke wijziging aan de tokenlogica opnieuw moet meewegen — en de winst is klein: een
+koerier die de planning moet bellen is niet ernstig, en die gevallen zijn per
+definitie zeldzaam én zichtbaar (`zonder_uitnodiging` in de runsamenvatting van
+`send-declaration-reminders`, plus de balk uit 042).
+
+De regel blijft dus zonder uitzondering: **in de herinneringsketen wordt
+`declaration_issue_token()` niet aangeroepen.** Wie die regel later wil versoepelen,
+weegt bovenstaande opnieuw — het is geen vergeten geval.

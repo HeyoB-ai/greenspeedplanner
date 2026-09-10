@@ -234,6 +234,38 @@ export default function App() {
         </div>
       </header>
 
+
+      {/* Vastgelopen post (migratie 042). GEEN badge op een menu maar een balk,
+          en dat is een bewuste afwijking van hoe de ontbrekende nummers worden
+          getoond: daar zit "Beheer → Nummers" achter, hier is geen mailscherm om
+          naartoe te klikken. Een badge zou een getal tonen zonder ergens naartoe
+          te leiden; deze balk noemt de twee getallen apart én zegt waar je moet
+          kijken. Zelfde vorm en kleur als de feestdagenwaarschuwing hieronder.
+
+          De twee getallen staan met opzet niet bij elkaar opgeteld: verlopen zonder
+          mislukt betekent dat er nooit iets is geprobeerd (poort dicht, geen adres),
+          mislukt zonder verlopen betekent dat de provider het weigerde. Die
+          verhouding is de diagnose. */}
+      {attention.mailFailed + attention.mailExpired > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-sm px-4 py-2 flex items-start gap-2">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            Er staat post vast:{' '}
+            {attention.mailFailed > 0 && (
+              <><strong>{attention.mailFailed}</strong> mislukt</>
+            )}
+            {attention.mailFailed > 0 && attention.mailExpired > 0 && ' en '}
+            {attention.mailExpired > 0 && (
+              <><strong>{attention.mailExpired}</strong> verlopen</>
+            )}
+            . Mislukte post is geprobeerd en geweigerd — de reden staat in{' '}
+            <code>mail_outbox.error</code>. Verlopen post is nooit geprobeerd en te
+            oud geworden; kijk dan naar <code>MAIL_ALLOWLIST</code>,{' '}
+            <code>MAIL_LIVE</code> en of iedere koerier een e-mailadres heeft.
+            Geen van beide gaat vanzelf nog uit.
+          </span>
+        </div>
+      )}
       {/* De generator slaat alleen feestdagen over die in `holidays` staan. Reikt het
           roostervenster voorbij de laatst bekende feestdag, dan plant hij daarna
           stilzwijgend op feestdagen door — vandaar deze waarschuwing. Datums bewust in
