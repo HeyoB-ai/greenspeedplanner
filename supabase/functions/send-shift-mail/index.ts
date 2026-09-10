@@ -401,6 +401,12 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
 // wordt, en juist die vraag is de reden dat de mail bestaat.
 const ASKS_SOMETHING = new Set(['shift_followup', 'declaration_reminder', 'extra_work_request']);
 
+// Welke soorten over één AFGELOPEN dienst gaan. Bepaalt of de peildatum bovenaan
+// de mail nodig is — zie de toelichting bij renderMail(). Een meerwerkmelding
+// hoort hier niet bij: die gaat naar een apotheek en vraagt om een beslissing over
+// tijd die nog doorbelast moet worden, niet om een terugblik.
+const AFGELOPEN_DIENST = new Set(['shift_followup', 'declaration_reminder']);
+
 function subjectFor(rows: OutboxRow[]): string {
   if (rows.length > 1) {
     // Zit er een vraag tussen mededelingen, dan is die vraag het onderwerp.
@@ -635,10 +641,12 @@ function renderHtml(
 //     zo'n mail onvolledig in plaats van onwaar. Dat is een veel goedkopere fout,
 //     en het is de enige manier om ook het rommelige geval te dekken waarin twee
 //     tijden door elkaar heen lopen.
-//   * Een nabericht gaat over één dienst die al voorbij is. Daar valt niets meer
-//     aan te verschuiven, dus daar voegt de regel niets toe en staat hij alleen
-//     maar in de weg.
-// Vandaar: weg zodra de bundel uitsluitend uit naberichten bestaat, en anders
+//   * Een nabericht en een herinnering gaan over één dienst die al voorbij is.
+//     Daar valt niets meer aan te verschuiven, dus daar voegt de regel niets toe
+//     en staat hij alleen maar in de weg. Beide soorten vallen daarom in dezelfde
+//     categorie: het onderscheid is niet "welk berichtsoort" maar "gaat dit over
+//     een afgelopen dienst of over een doorlopend rooster".
+// Vandaar: weg zodra de bundel uitsluitend over afgelopen diensten gaat, en anders
 // blijft hij staan. Eén planningsblok in de bundel is genoeg om hem te houden.
 //
 // Tekst en HTML komen uit dezelfde blokken. Twee losse templates zouden na de
@@ -661,7 +669,7 @@ function renderMail(
 
   const blocks = rendered.map((x) => x.lines);
   const subject = subjectFor(rows);
-  const stand = rendered.every((x) => x.kind === 'shift_followup')
+  const stand = rendered.every((x) => AFGELOPEN_DIENST.has(x.kind))
     ? null
     : `Stand op ${todayNL()}:`;
   // Een apotheek is geen koerier: andere aanhef, en de afsluiting gaat niet
