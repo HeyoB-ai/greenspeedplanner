@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Info, KeyRound, Upload, UserPlus, Users, X } from 'lucide-react';
-import { Employee, EmployeeImportResult, Pharmacy } from '../types';
+import { CourierContact, Employee, EmployeeImportResult, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
 import {
   EmployeeInput, csvToRows, fullName, getEmployees, importEmployees, saveEmployee,
 } from './employeeService';
+// Het telefoonnummer hoort in courier_contacts en niet in employees.phone: daar
+// geldt de CHECK op E.164 en daar kijkt de SMS-keten naar. Dit scherm bewerkt dus
+// dezelfde rij als Beheer > Nummers, met dezelfde normalisatie. Zie migratie 043.
+import {
+  deleteContact, getContacts, normalizePhone, phoneWarning, saveContact,
+} from './contactService';
 
 interface Props {
   onClose: () => void;
@@ -34,13 +40,19 @@ export default function Employees({ onClose }: Props) {
   const [importReport, setImportReport] = useState<EmployeeImportResult[] | null>(null);
   const [importWarning, setImportWarning] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [contacts, setContacts] = useState<CourierContact[]>([]);
+  // Het nummer staat los van `form`: het gaat naar een andere tabel dan de rest van
+  // het formulier, en de invoer is vrije tekst die pas bij het opslaan door
+  // normalizePhone() gaat.
+  const [phoneDraft, setPhoneDraft] = useState('');
 
   async function reload() {
     setLoading(true);
     try {
-      const [es, ps] = await Promise.all([getEmployees(), getPharmacies()]);
+      const [es, ps, cs] = await Promise.all([getEmployees(), getPharmacies(), getContacts()]);
       setEmployees(es);
       setPharmacies(ps);
+      setContacts(cs);
       setError('');
     } catch (e: any) {
       setError(e?.message ?? 'Laden mislukt.');
@@ -84,6 +96,29 @@ export default function Employees({ onClose }: Props) {
   const pharmacyName = useMemo(
     () => new Map(pharmacies.map((p) => [p.id, p.name])), [pharmacies]);
 
+  const contactByCourier = useMemo(
+    () => new Map(contacts.map((c) => [c.courierId, c])), [contacts]);
+
+  // De medewerker die nu in het formulier staat. Nodig voor user_profile_id: zonder
+  // inlogaccount is er geen koerier om een nummer aan te hangen.
+  const editing = useMemo(
+    () => (form?.id ? employees.find((e) => e.id === form.id) ?? null : null),
+    [employees, form]);
+  const linkedCourier = editing?.userProfileId ?? null;
+  // Bij een nieuwe medewerker bestaat het account nog niet, dus ook nog geen plek
+  // voor het nummer. Eerst opslaan en koppelen, dan het nummer.
+  const phoneDisabled = busy || !linkedCourier;
+
+  // Waarschuwing en geen blokkade: een SMS naar een vaste lijn verdwijnt geruisloos,
+  // dus je wilt een seintje en geen slot. Zelfde functie als het contactenscherm
+  // gebruikt, zodat de twee schermen dezelfde grens trekken.
+  const phoneHint = useMemo(() => {
+    const raw = phoneDraft.trim();
+    if (raw === '') return null;
+    const parsed = normalizePhone(raw);
+    return parsed.ok ? phoneWarning(parsed.e164) : null;
+  }, [phoneDraft]);
+
   function edit(e: Employee) {
     setImportReport(null);
     setForm({
@@ -92,6 +127,13 @@ export default function Employees({ onClose }: Props) {
       first_name: e.firstName,
       last_name: e.lastName,
       email: e.email ?? '',
+      // LAAT DIT STAAN. Het veld is niet meer te bewerken en employee_save() negeert
+      // het sinds migratie 043 — maar het meesturen maakt de uitrolvolgorde
+      // onschadelijk. Draait de frontend vóór de migratie, dan schrijft de OUDE
+      // functie hier dezelfde waarde terug die er al stond. Zou de frontend phone
+      // helemaal niet meer meesturen, dan zou die oude functie de kolom op NULL
+      // zetten en precies de nummers wissen die nog met de hand overgezet moeten
+      // worden.
       phone: e.phone ?? '',
       employment_type: e.employmentType ?? '',
       hourly_wage: e.hourlyWage != null ? String(e.hourlyWage) : '',
@@ -101,15 +143,46 @@ export default function Employees({ onClose }: Props) {
       employed_until: e.employedUntil ?? '',
       note: e.note ?? '',
     });
+    // Uit courier_contacts, niet uit e.phone: dat laatste is sinds migratie 043 geen
+    // bron meer en kan een oude, niet-overgezette waarde bevatten.
+    setPhoneDraft(e.userProfileId
+      ? contactByCourier.get(e.userProfileId)?.phoneE164 ?? ''
+      : '');
   }
 
   async function save() {
     if (!form) return;
+
+    // Het nummer EERST valideren, vóór er iets is weggeschreven. Anders staat de
+    // medewerker al opgeslagen terwijl de foutmelding over het nummer gaat, en dan
+    // is niet te zien wat er wel en niet is gelukt.
+    const raw = phoneDraft.trim();
+    let e164: string | null = null;
+    if (linkedCourier && raw !== '') {
+      const parsed = normalizePhone(raw);
+      if (!parsed.ok) { setError(parsed.reason); return; }
+      e164 = parsed.e164;
+    }
+
     setBusy(true);
     setError('');
     try {
       await saveEmployee(form);
+
+      // Het nummer gaat naar courier_contacts — dezelfde rij die Beheer > Nummers
+      // bewerkt. Leeggemaakt veld betekent: nummer weg, want anders blijft er een
+      // nummer in de SMS-keten staan dat de planner net heeft gewist.
+      if (linkedCourier) {
+        const current = contactByCourier.get(linkedCourier)?.phoneE164 ?? '';
+        if (e164 && e164 !== current) {
+          await saveContact(linkedCourier, e164, contactByCourier.get(linkedCourier)?.note ?? null);
+        } else if (!e164 && current !== '') {
+          await deleteContact(linkedCourier);
+        }
+      }
+
       setForm(null);
+      setPhoneDraft('');
       await reload();
     } catch (e: any) {
       setError(e?.message ?? 'Opslaan mislukt.');
@@ -160,7 +233,7 @@ export default function Employees({ onClose }: Props) {
         <div className="p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <button
-              onClick={() => { setImportReport(null); setForm({ ...EMPTY }); }}
+              onClick={() => { setImportReport(null); setForm({ ...EMPTY }); setPhoneDraft(''); }}
               disabled={busy}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
             >
@@ -271,10 +344,28 @@ export default function Employees({ onClose }: Props) {
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" />
                 </Field>
+                {/* Dit veld schrijft naar courier_contacts en niet naar
+                    employees.phone (migratie 043). Het bewerkt dus letterlijk
+                    dezelfde rij als Beheer > Nummers; wat je hier invult, gaat de
+                    SMS-keten in. Vrije invoer — normalizePhone() maakt er bij het
+                    opslaan E.164 van, net als in dat andere scherm. */}
                 <Field label="Telefoon">
-                  <input value={form.phone ?? ''} disabled={busy} placeholder="voor de SMS"
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" />
+                  <input value={phoneDraft} disabled={phoneDisabled}
+                    placeholder={linkedCourier ? '06… of +316…' : 'eerst een account koppelen'}
+                    onChange={(e) => setPhoneDraft(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400" />
+                  {!linkedCourier ? (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Geen inlogaccount gekoppeld. Een SMS gaat naar de koerier achter dat account, dus
+                      zonder koppeling is er geen plek voor het nummer. Sla eerst op en koppel een
+                      account met de sleutelknop in de lijst.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Gaat naar de SMS-keten. Hetzelfde nummer als in Beheer &rarr; Nummers.
+                      {phoneHint && <span className="text-amber-700"> {phoneHint}</span>}
+                    </p>
+                  )}
                 </Field>
                 <Field label="Dienstverband">
                   <select value={form.employment_type ?? ''} disabled={busy}

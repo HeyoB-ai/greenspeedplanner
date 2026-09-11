@@ -65,6 +65,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `040_capture_dashboard_drift.sql` | legt drie via het dashboard aangemaakte functies + triggers vast: `shifts_no_past_insert`, `block_role_change`, `block_pharmacy_delete_with_packages`. Verandert niets aan het gedrag |
 | `041_reminder_invited_on_sent_at.sql` | `invited_on` in de herinnering komt uit `mail_outbox.sent_at` en niet uit `created_at`; is de uitnodiging nooit bezorgd, dan beweert de tekst geen datum |
 | `042_attention_stuck_mail.sql` | `mail_failed` en `mail_expired` als twee losse kolommen in `planner_attention()`; ook buiten `total` |
+| `043_phone_single_source.sql` | `employee_save()` raakt `employees.phone` niet meer aan; `courier_contacts.phone_e164` is de enige bron voor de SMS-keten |
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -103,6 +104,7 @@ achter. Geen foutmelding = geslaagd; elke melding noemt het geval dat faalde.
 | `038_planning_mail_expiry_test.sql` | begonnen diensten vervallen mét reden, toekomstige blijven, `shift_cancelled` blijft altijd, een afspraak vervalt alleen met verstreken einddatum, en een lege lijst blijft |
 | `039_attention_missing_phone_test.sql` | de telling klopt met de rechtstreekse query, beweegt mee als een nummer weggaat of terugkomt, en `total` blijft er buiten |
 | `042_attention_stuck_mail_test.sql` | beide tellers kloppen en bewegen los van elkaar, `pending` en `sending` tellen niet mee, en `total` blijft er buiten |
+| `043_phone_single_source_test.sql` | een nieuwe medewerker krijgt geen `phone`, een bestaande blijft staan of hij wel of niet wordt meegestuurd, de rest wordt nog bijgewerkt, en zonder plannersessie weigert de functie |
 | `025_pharmacy_invoicing_test.sql` | de elf takken van `invoice_lines()`: één en twee apotheken (uitloop én korter), starttarief niet verdeeld, spoed, ontbrekende declaratie, ontbrekend tarief, ontbrekende verhouding, reiskosten naar rato, afwijkingssignaal, en dat concepten niet meetellen |
 | `016_shift_mail_test.sql` | de volledige beslistabel van de sweep: tien donderdagen = één bericht, opnieuw bevestigen is stil, variant erbij én variant weggewijzigd zijn nieuws, versmallen door tijdsverloop niet, afmelding bij verwijderen en bij een koerierwissel |
 
@@ -1219,43 +1221,6 @@ die laatste zegt alleen of het `http_post`-statement zelf lukte.
 > run krijgt elke openstaande declaratie waarvan het moment al voorbij is meteen
 > een bericht — en na het inkorten van de termijn in 036 kunnen dat er in één keer
 > een aantal zijn.
-
----
-
-## Openstaand punt voor de bezorg-app: vraag het telefoonnummer bij het uitnodigen
-
-**Dit hoort niet in deze repo thuis, en juist daarom staat het hier opgeschreven.**
-
-Een koerier komt het systeem binnen via een uitnodiging uit de bezorg-app
-(`authService.ts` → `inviteUser`, gevolgd door `auth.admin.inviteUserByEmail`; zie
-de toelichting boven `014_invitations_rls.sql`). Die stroom gaat over een
-**e-mailadres**. De registratietrigger uit migratie 015 schrijft daarna naam, rol
-en apotheken in `user_profiles`. Op geen enkel moment wordt om een telefoonnummer
-gevraagd.
-
-Het enige schrijfpad naar `courier_contacts` is een planner die **Beheer →
-Nummers** opent en het nummer met de hand intypt. Er is geen trigger, geen
-default en geen backfill.
-
-Gemeten op 10-09-2026: **3 van de 5 koeriers had geen nummer.** Dat is geen
-toeval maar het te verwachten gevolg van een handmatige stap waar niemand aan
-herinnerd wordt. Zo'n koerier valt in twee ketens stil weg:
-
-* `sms_due_shifts()` (migratie 012) joint met een **INNER JOIN** op
-  `courier_contacts` — die koerier verdwijnt zonder logregel uit de selectie;
-* `declaration_reminder_due()` (migratie 037) meldt hem wél met naam en id, maar
-  kan geen SMS sturen; de mail gaat uit, de por niet.
-
-**Wat er in deze repo aan gedaan is** — beide zijn een melder, geen oplossing:
-`CourierContacts.tsx` waarschuwt voor élke koerier zonder nummer (niet meer alleen
-voor wie een dienst heeft staan), en migratie 039 zet de telling in de badge op
-Beheer, zodat het opvalt zonder dat iemand dat scherm hoeft te openen.
-
-**Wat er nog moet gebeuren, in de bezorg-app:** het telefoonnummer bij het
-uitnodigen vragen en meesturen, zodat `courier_contacts` gevuld raakt op het moment
-dat de koerier binnenkomt. Zolang dat niet gebeurt, blijft dit een handmatige stap
-en blijft de badge het enige wat eraan herinnert.
-
 ---
 
 ## Drift: wat er in de database staat maar niet in de migraties stond
@@ -1302,48 +1267,42 @@ WHERE n.nspname = 'public' AND NOT t.tgisinternal ORDER BY 1, 2;
 die controleer je apart met `tgrelid = 'auth.users'::regclass`. Hij bestaat en staat
 aan (`tgenabled = 'O'`).
 
-## ⛔ Migratie 029 is bewust NIET uitgevoerd
+## Migratie 029 is op 11-09-2026 gedraaid
 
-`029_employees.sql` staat in de repo maar is nooit gedraaid. Dat is een besluit, geen
-achterstand — laat hem staan zoals hij staat.
+Het scherm **Beheer → Medewerkers** werkt sinds die datum. Wat daarvóór in deze
+sectie stond — dat 029 bewust níet was uitgevoerd — is dus achterhaald. De
+afweging die eronder lag blijft wél gelden, alleen niet meer als besluit om het
+niet te doen maar als gevolgen om te kennen.
 
-**Hoe je het ziet:** de vijf functies `employee_active_on`, `employee_import`,
-`employee_link_profile`, `employee_save` en `employees_touch` bestaan niet in de
-database, en de tabel `public.employees` ook niet.
+**Het zijn 5 rijen, niet 69.** De seed onderaan 029 selecteert
+`FROM user_profiles WHERE role = 'courier'` — de inlogaccounts, en dat zijn er vijf.
+De 69 rijen uit het commentaar in die migratie zijn de personeelsadministratie die
+via `employee_import` (CSV) binnenkomt. Zolang die import niet is gedaan, staat er
+een lijst met vijf namen uit de accounts en niet de administratie zelf.
 
-**Wat er daardoor niet werkt:** het scherm **Beheer → Medewerkers** toont een
-laadfout. `employeeService.ts` leest de view `employees_active` en roept
-`employee_save`, `employee_link_profile` en `employee_import` aan; alle vier bestaan
-niet. De app crasht niet — `Employees.tsx` vangt de fout op — maar er komt geen
-lijst. Daarnaast heeft `declaration_employment_type()` (migratie 035) geen tweede
-bron en valt hij altijd terug op `user_profiles.employmentType`.
+**De seed heeft geen telefoonnummers gevuld.** `employees.phone` staat niet in de
+kolomlijst van de seed en `user_profiles` heeft geen telefoonveld. Alle vijf kregen
+`phone = NULL`. Dat heeft één ding definitief opgelost: het idee dat de ontbrekende
+nummers misschien al ergens in `employees` stonden, kon niet waar zijn.
 
-**Waarom we hem niet draaien.** Draaien is *veilig* — 029 raakt niets buiten zijn
-eigen familie: geen `ALTER TABLE` op een bestaande tabel, geen `CREATE OR REPLACE`
-van een functie die al bestond, en van 030–039 noemt alleen 035 het woord
-`employees`, met een `to_regclass`-poort eromheen. Maar veilig is niet hetzelfde als
-nuttig:
+**`employees.employment_type` is vanaf nu de bron van het dienstverband.** Sinds de
+tabel bestaat, activeert de `to_regclass`-tak in `declaration_employment_type()`
+(migratie 035, regel 114) en gaat `employees.employment_type` vóór
+`user_profiles.employmentType` — maar alleen als er werkelijk iets staat
+(`IF v_emp IS NOT NULL`). Op de dag van draaien was de uitkomst daarom identiek: de
+seed kopieerde dat veld uit het profiel.
 
-* **De seed levert 5 rijen op, niet 69.** Hij selecteert
-  `FROM user_profiles WHERE role = 'courier'` — de inlogaccounts. De 69 rijen uit het
-  commentaar zijn de personeelsadministratie die via `employee_import` (CSV) zou
-  binnenkomen. Zonder die import krijg je een leeg formulier met vijf namen.
-* **De seed vult geen telefoonnummers.** `employees.phone` staat niet in de
-  kolomlijst en `user_profiles` heeft geen telefoonveld. Draaien helpt dus niets
-  tegen de ontbrekende nummers; die blijven handwerk.
-* **Vanaf dat moment is `employees.employment_type` de bron van het dienstverband**
-  en overstemt hij `user_profiles.employmentType`. Op dag één is de uitkomst
-  identiek — de seed kopieert dat veld en 035 overschrijft alleen als er werkelijk
-  iets staat — maar vanaf de eerste wijziging in het scherm lopen de twee bronnen
-  uiteen, zonder dat iemand in de bezorg-app dat merkt.
+> ⚠ **Gevolg om te kennen.** Vanaf de eerste wijziging in het scherm Medewerkers
+> lopen de twee bronnen uiteen, en dan verliest `user_profiles.employmentType` zijn
+> zeggenschap **zonder dat de bezorg-app dat merkt**. Wie daar het dienstverband
+> aanpast, verandert niets meer aan de zzp-berekening van deze applicatie. Er is
+> geen melding, geen synchronisatie en geen foutmelding — het veld wordt gewoon niet
+> meer gelezen. Dat is de prijs van 029 en die is met het draaien betaald.
 
-**Draai hem dus pas als de personeelsadministratie er echt in gaat**, met de
-CSV-import in dezelfde beweging, en met het besluit dat `employees` vanaf dan de
-bron van het dienstverband is. Draai hem **niet** om de migratielijst compleet te
-maken: dan haal je een tweede bron van waarheid binnen waar niemand op stuurt.
-
----
-
+De balk bovenaan dat scherm leunt hierop: hij telt alleen medewerkers met
+`employment_type = 'loondienst'` die nog geen personeelsnummer hebben, en noemt
+apart wie er geen dienstverband heeft ingevuld — want dan is onbekend of er een
+nummer bij hoort.
 ## Vastgelopen post: eerst zichtbaar, herkansen pas als het nodig blijkt
 
 **Een mislukte verzending wordt nooit opnieuw aangeboden.** `mail_pending_couriers()`
@@ -1432,3 +1391,116 @@ definitie zeldzaam én zichtbaar (`zonder_uitnodiging` in de runsamenvatting van
 De regel blijft dus zonder uitzondering: **in de herinneringsketen wordt
 `declaration_issue_token()` niet aangeroepen.** Wie die regel later wil versoepelen,
 weegt bovenstaande opnieuw — het is geen vergeten geval.
+
+---
+
+## Opdracht voor de bezorg-app: vraag het telefoonnummer bij het uitnodigen
+
+Dit vervangt de eerdere sectie met dezelfde strekking. Sinds migratie 043 staat vast
+wélke tabel de bron is, dus deze opdracht is nu volledig en kan zonder verder
+uitzoekwerk in de repo van de bezorg-app worden neergelegd.
+
+### Waarom
+
+Een koerier komt binnen via een uitnodiging uit de bezorg-app (`authService.ts` →
+`inviteUser`, gevolgd door `auth.admin.inviteUserByEmail`). Die stroom gaat over een
+**e-mailadres**. De registratietrigger `handle_new_user()` (migratie 015) schrijft
+daarna `id`, `name`, `role` en `pharmacy_ids` in `user_profiles`. **Op geen enkel
+moment wordt om een telefoonnummer gevraagd.**
+
+Het enige schrijfpad naar `courier_contacts` is een planner die met de hand een
+nummer intypt. Gemeten op 10-09-2026: **3 van de 5 koeriers had er geen.** Zo'n
+koerier valt in twee ketens stil weg — `sms_due_shifts()` (migratie 012) joint met
+een INNER JOIN en laat hem zonder logregel uit de selectie vallen, en
+`declaration_reminder_due()` (037/041) meldt hem wel maar kan geen SMS sturen.
+
+### Welke tabel
+
+`public.courier_contacts` (migratie 011). **Niet** `employees.phone` — die kolom is
+sinds migratie 043 expliciet geen bron meer en wordt door niets gelezen.
+
+| Kolom | Type | Waarde |
+|---|---|---|
+| `courier_id` | `UUID` **PRIMARY KEY** | `user_profiles.id` van de koerier, dus dezelfde id als `auth.users.id` |
+| `phone_e164` | `TEXT NOT NULL` | het nummer in E.164, zie hieronder |
+| `note` | `TEXT` | optioneel, bv. `'werktelefoon'` of `'prive'` |
+| `updated_at` | `TIMESTAMPTZ NOT NULL` | heeft een default, hoeft niet meegestuurd |
+| `updated_by` | `UUID` | `user_profiles.id` van wie het invulde; mag `NULL` |
+
+Eén rij per koerier: `courier_id` is de primary key, dus schrijven gaat met een
+**upsert op `courier_id`**, niet met een insert.
+
+### Welk formaat, en welke validatie
+
+`phone_e164` heeft een CHECK die niet te omzeilen is:
+
+```sql
+CHECK (phone_e164 ~ '^\+[1-9][0-9]{7,14}$')
+```
+
+Dus: een `+`, dan een landcode die niet met 0 begint, dan 7 tot 14 cijfers. Geen
+spaties, streepjes of haakjes. `'06 12 34 56 78'` wordt geweigerd door de database.
+
+**Normaliseer vóór het opslaan.** De regels staan in
+`src/planner/contactService.ts` → `normalizePhone()` en zijn bewust conservatief:
+wat niet met zekerheid te lezen is, wordt geweigerd met een leesbare reden in plaats
+van gegokt — een verkeerd geraden nummer levert een SMS bij een vreemde af.
+
+1. Alle spaties, streepjes, punten en haakjes eruit.
+2. Staat er daarna iets anders dan cijfers en `+` in → weigeren.
+3. Begint het met `+` → ongewijzigd laten.
+4. Begint het met `00` → vervang door `+`. (`0031…` → `+31…`)
+5. Begint het met `0` → vervang door `+31`. (`06…` → `+316…`)
+6. Begint het met `31` → zet er een `+` voor.
+7. Begint het met `6` en is het precies 9 cijfers → `+31` ervoor.
+8. Anders weigeren met: *"Onduidelijk nummer — noteer het als 06… of +316…."*
+9. Past de uitkomst niet op de CHECK hierboven → weigeren.
+
+**Waarschuw, blokkeer niet, bij een niet-mobiel nummer.** `phoneWarning()` in
+hetzelfde bestand doet dat: een SMS naar een vaste lijn verdwijnt geruisloos, dus
+daar wil je een seintje en geen slot.
+
+### Waar in de stroom
+
+Bij het **uitnodigen**, naast het e-mailadres, en verplicht. Niet bij de registratie
+door de koerier zelf: dan bepaalt de koerier of het veld gevuld raakt, en dat is
+precies hoe de huidige situatie is ontstaan.
+
+Technisch punt: op het moment van uitnodigen bestaat `user_profiles.id` nog niet —
+die wordt door `handle_new_user()` aangemaakt zodra de koerier zijn account
+activeert. Het nummer moet dus mee in de uitnodiging en pas bij activatie in
+`courier_contacts` landen. Twee werkbare vormen:
+
+* **Kolom op `invitations`.** Een `phone_e164 TEXT` erbij, gevalideerd bij het
+  uitnodigen, en `handle_new_user()` schrijft bij activatie de rij in
+  `courier_contacts`. Voordeel: één plek, en de trigger draait zonder sessie dus
+  zonder RLS-bezwaar. Nadeel: raakt `handle_new_user()`, en dat is de functie die
+  migratie 015 bewust smal houdt.
+* **`raw_user_meta_data`.** Het nummer meegeven bij `inviteUserByEmail` en door
+  `handle_new_user()` uitlezen. Nadeel: die metadata komt uit de browser en migratie
+  015 negeert die om precies die reden voor de rol. Voor een telefoonnummer is dat
+  minder erg — er valt geen privilege mee te verhogen — maar het is wel weer een veld
+  uit de browser dat de database vertrouwt.
+
+**Mijn voorkeur is de eerste**, met de validatie aan de kant van de bezorg-app én de
+CHECK als vangnet in de database.
+
+### Wat er met de bestaande koeriers moet gebeuren
+
+De nieuwe stroom vult alleen wie er ná de wijziging bij komt. Voor de bestaande
+groep is er geen automatische weg — er is geen bron om uit te kopiëren, want
+`employees.phone` is leeg (de seed van 029 vulde hem niet) en `user_profiles` heeft
+geen telefoonveld.
+
+Dus: **met de hand**, in **Beheer → Nummers** van deze applicatie. Die lijst noemt
+zelf wie er nog ontbreekt, en de badge op Beheer telt ze (migratie 039). Dat is
+eenmalig werk, en het is af als die badge op nul staat.
+
+Zet de nieuwe stroom **niet** aan in de verwachting dat het bestaande gat daarmee
+dichtloopt. Het loopt alleen dicht voor nieuwe koeriers.
+
+### Wat deze repo al doet, en wat het niet is
+
+Twee melders, geen oplossing: `CourierContacts.tsx` waarschuwt voor élke koerier
+zonder nummer, en migratie 039 zet de telling in de badge op Beheer. Beide maken
+zichtbaar dat het nummer ontbreekt; geen van beide vult het in.
