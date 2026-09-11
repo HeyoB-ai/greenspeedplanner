@@ -54,7 +54,32 @@ export default function Employees({ onClose }: Props) {
     () => (showInactive ? employees : employees.filter((e) => e.isActive)),
     [employees, showInactive]);
 
-  const withoutNumber = useMemo(() => employees.filter((e) => !e.personnelNumber), [employees]);
+  // Wie er werkelijk een personeelsnummer mist. Twee beperkingen op de oude
+  // filter, want die telde iedereen zonder nummer en noemde dus namen waar niets
+  // aan te doen valt:
+  //
+  //   * ALLEEN WIE IN DIENST IS. Iemand met een employed_until in het verleden
+  //     krijgt geen nummer meer. Dit volgt bewust isActive en niet de
+  //     showInactive-schakelaar hierboven: die schakelaar bepaalt wat je wílt zien,
+  //     niet wie er nog een nummer nodig heeft.
+  //   * ALLEEN LOONDIENST. Een zzp'er staat niet op de loonlijst en krijgt er nooit
+  //     een; die in de balk noemen is een taak verzinnen die niet bestaat.
+  const needsNumber = useMemo(
+    () => employees.filter((e) => e.isActive
+                               && e.employmentType === 'loondienst'
+                               && !e.personnelNumber),
+    [employees]);
+
+  // Dienstverband niet ingevuld → we weten niet OF er een nummer bij hoort. Deze
+  // stil weglaten zou net zo misleidend zijn als ze meetellen: in beide gevallen
+  // staat er een getal dat iets beweert wat niemand heeft nagekeken. Dus apart
+  // genoemd, met de onzekerheid erin, zodat de planning het dienstverband invult in
+  // plaats van te gokken.
+  const unknownType = useMemo(
+    () => employees.filter((e) => e.isActive
+                               && !e.employmentType
+                               && !e.personnelNumber),
+    [employees]);
   const inactiveCount = employees.length - employees.filter((e) => e.isActive).length;
   const pharmacyName = useMemo(
     () => new Map(pharmacies.map((p) => [p.id, p.name])), [pharmacies]);
@@ -163,13 +188,28 @@ export default function Employees({ onClose }: Props) {
           {error && <p className="text-sm text-red-600">{error}</p>}
           {loading && <p className="text-sm text-slate-500">Laden…</p>}
 
-          {!loading && withoutNumber.length > 0 && (
+          {!loading && (needsNumber.length > 0 || unknownType.length > 0) && (
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3">
               <AlertTriangle size={15} className="mt-0.5 shrink-0" />
               <span>
-                {withoutNumber.length === 1 ? 'Eén medewerker heeft' : `${withoutNumber.length} medewerkers hebben`} geen
-                personeelsnummer: <strong>{withoutNumber.map(fullName).join(', ')}</strong>. Ze zijn wel aangemaakt —
-                vul het nummer aan zodra het bekend is.
+                {needsNumber.length > 0 && (
+                  <>
+                    {needsNumber.length === 1
+                      ? 'Eén medewerker in loondienst heeft'
+                      : `${needsNumber.length} medewerkers in loondienst hebben`} geen
+                    personeelsnummer: <strong>{needsNumber.map(fullName).join(', ')}</strong>. Ze zijn wel
+                    aangemaakt — vul het nummer aan zodra het bekend is.
+                  </>
+                )}
+                {needsNumber.length > 0 && unknownType.length > 0 && ' '}
+                {unknownType.length > 0 && (
+                  <>
+                    Van {unknownType.length === 1 ? 'één medewerker' : `${unknownType.length} medewerkers`} is het
+                    dienstverband niet ingevuld, dus is onbekend of er een personeelsnummer bij hoort:{' '}
+                    <strong>{unknownType.map(fullName).join(', ')}</strong>. Vul het dienstverband in, dan
+                    verdwijnt deze regel of komt de naam hierboven te staan.
+                  </>
+                )}
               </span>
             </div>
           )}
