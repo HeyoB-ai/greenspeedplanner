@@ -15,7 +15,7 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
   const sb = requireClient();
   const { data, error } = await sb
     .from('pharmacies')
-    .select('id, name, city, billing_email, groupId')
+    .select('id, name, city, billing_email, is_benu_selfbilling, groupId')
     .order('name', { ascending: true });
   if (error) throw error;
   return (data ?? []).map((r: any): Pharmacy => ({
@@ -23,6 +23,7 @@ export async function getPharmacies(): Promise<Pharmacy[]> {
     name: r.name,
     city: r.city ?? null,
     billingEmail: r.billing_email ?? null,
+    isBenuSelfbilling: r.is_benu_selfbilling ?? false,
     groupId: r.groupId ?? null,
   }));
 }
@@ -39,6 +40,17 @@ export async function setPharmacyBillingEmail(
   const sb = requireClient();
   const { error } = await sb.rpc('set_pharmacy_billing_email', {
     p_pharmacy_id: pharmacyId, p_email: email,
+  });
+  if (error) throw error;
+}
+
+/** Zet de BENU selfbilling-vlag (migratie 044). De RPC bewaakt zelf of je planner bent. */
+export async function setPharmacyBenuSelfbilling(
+  pharmacyId: string, value: boolean,
+): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.rpc('set_pharmacy_benu_selfbilling', {
+    p_pharmacy_id: pharmacyId, p_value: value,
   });
   if (error) throw error;
 }

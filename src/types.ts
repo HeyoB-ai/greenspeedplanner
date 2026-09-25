@@ -30,6 +30,8 @@ export interface Pharmacy {
   // Waar meerwerkmeldingen heen gaan (migratie 031). Zonder adres kan een
   // melding niet vrijgegeven worden.
   billingEmail: string | null;
+  // BENU selfbilling-apotheek: aparte facturatiestroom via BENU HQ (migratie 044).
+  isBenuSelfbilling: boolean;
   // De keten waar deze apotheek bij hoort (pharmacies."groupId"). Bepaalt of de
   // factuur gesplitst wordt (migratie 032).
   groupId: string | null;

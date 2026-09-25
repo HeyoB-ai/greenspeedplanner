@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Check, Euro, Info, Trash2, X } from 'lucide-react';
 import { Chain, Pharmacy, PharmacyRate } from '../types';
-import { getPharmacies, setPharmacyBillingEmail, setPharmacyCity } from './plannerService';
+import { getPharmacies, setPharmacyBenuSelfbilling, setPharmacyBillingEmail, setPharmacyCity } from './plannerService';
 import {
   deletePharmacyRate, euro, getChains, getPharmacyRates, setChainBilling, setPharmacyRate,
 } from './invoiceService';
@@ -43,6 +43,9 @@ export default function Pharmacies({ onClose }: Props) {
   });
   // Adres voor meerwerkmeldingen (migratie 031).
   const [mailDrafts, setMailDrafts] = useState<Record<string, string>>({});
+  // Apart van busyId: de vlag slaat direct op bij het aanvinken, terwijl de
+  // plaats pas op Enter/Opslaan gaat. Eén busy-veld zou die twee door elkaar halen.
+  const [benuBusy, setBenuBusy] = useState<string | null>(null);
 
   async function reload() {
     setLoading(true);
@@ -59,6 +62,20 @@ export default function Pharmacies({ onClose }: Props) {
     }
   }
   useEffect(() => { reload(); }, []);
+
+  // De vlag heeft geen concept-staat: aanvinken is opslaan. Daarna opnieuw laden,
+  // zodat het vinkje toont wat er werkelijk in de database staat.
+  async function toggleBenu(id: string, current: boolean) {
+    setBenuBusy(id);
+    try {
+      await setPharmacyBenuSelfbilling(id, !current);
+      await reload();
+    } catch (e: any) {
+      setRowError((m) => ({ ...m, [id]: e?.message ?? 'Opslaan mislukt.' }));
+    } finally {
+      setBenuBusy(null);
+    }
+  }
 
   const missing = useMemo(() => pharmacies.filter((p) => !p.city), [pharmacies]);
 
@@ -335,6 +352,19 @@ export default function Pharmacies({ onClose }: Props) {
                       }`}
                       title="Zonder adres kan een meerwerkmelding niet vrijgegeven worden"
                     />
+                    <label
+                      className="inline-flex items-center gap-1.5 shrink-0 cursor-pointer select-none text-sm text-slate-700"
+                      title="BENU selfbilling-apotheek: factuur loopt via BENU HQ"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={p.isBenuSelfbilling}
+                        disabled={benuBusy === p.id}
+                        onChange={() => toggleBenu(p.id, p.isBenuSelfbilling)}
+                        className="rounded border-slate-300 text-green-600 focus:ring-green-500 disabled:opacity-60"
+                      />
+                      BENU selfbilling
+                    </label>
                     <button
                       onClick={() => openRates(p.id)} disabled={busy}
                       className="inline-flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 rounded-lg hover:border-slate-400 disabled:opacity-60 shrink-0"
