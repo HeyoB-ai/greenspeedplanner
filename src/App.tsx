@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, CalendarClock, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Settings, Trash2, User, Users, Wallet } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, ClipboardList, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Settings, Trash2, User, Users, Wallet } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -14,6 +14,7 @@ import Pharmacies from './planner/Pharmacies';
 import Invoicing from './planner/Invoicing';
 import Employees from './planner/Employees';
 import ExtraWork from './planner/ExtraWork';
+import BenuOverview from './planner/BenuOverview';
 import Declarations from './planner/Declarations';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
@@ -41,6 +42,7 @@ export default function App() {
   const [showInvoicing, setShowInvoicing] = useState(false);
   const [showEmployees, setShowEmployees] = useState(false);
   const [showExtraWork, setShowExtraWork] = useState(false);
+  const [showBenu, setShowBenu] = useState(false);
   const [showDeclarations, setShowDeclarations] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [attention, setAttention] = useState<Attention>(NO_ATTENTION);
@@ -210,6 +212,11 @@ export default function App() {
                 badge: attention.extraWork,
                 urgent: attention.extraWorkDisputed > 0,
                 onSelect: () => setShowExtraWork(true),
+              },
+              {
+                key: 'benu', label: 'BENU-invoer', icon: <ClipboardList size={15} />,
+                title: 'Overzicht dagelijkse koerier-invoer en apotheekgoedkeuring',
+                onSelect: () => setShowBenu(true),
               },
               {
                 key: 'invoicing', label: 'Facturatie', icon: <Receipt size={15} />,
@@ -397,6 +404,8 @@ export default function App() {
       {showExtraWork && (
         <ExtraWork onClose={() => { setShowExtraWork(false); setRefreshSignal((n) => n + 1); }} />
       )}
+
+      {showBenu && <BenuOverview onClose={() => setShowBenu(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule

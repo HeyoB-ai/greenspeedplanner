@@ -367,3 +367,31 @@ export interface EmployeeImportResult {
   action: 'nieuw' | 'bijgewerkt' | 'overgeslagen';
   note: string | null;
 }
+
+// ── BENU selfbilling: planneroverzicht (fase 4, migratie 047) ─────────────
+
+export type BenuEntryStatus =
+  | 'pending'        // koerier heeft nog niet ingediend
+  | 'no_extra'       // geen extra minuten
+  | 'submitted'      // ingediend, wacht op apotheek
+  | 'approved'
+  | 'disputed'       // apotheek betwist
+  | 'auto_approved'; // termijn verlopen
+
+// Eén dienst-apotheek. extra_minutes is NULL als gepland of PDA ontbreekt.
+export interface BenuOverviewRow {
+  shift_entry_id:   string;
+  shift_date:       string;          // 'YYYY-MM-DD'
+  courier_name:     string;
+  submitted_at:     string | null;
+  courier_note:     string | null;
+  pharmacy_id:      string;
+  pharmacy_name:    string;
+  planned_minutes:  number | null;
+  pda_minutes:      number | null;
+  extra_minutes:    number | null;
+  status:           BenuEntryStatus;
+  responded_at:     string | null;
+  dispute_deadline: string | null;
+  pharmacy_note:    string | null;
+}
