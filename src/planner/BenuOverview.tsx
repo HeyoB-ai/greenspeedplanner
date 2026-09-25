@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, X } from 'lucide-react';
+import { ClipboardList, Download, X } from 'lucide-react';
 import { BenuOverviewRow } from '../types';
 import { BENU_STATUS_LABELS, BENU_STATUS_STYLES, getBenuOverview } from './benuOverviewService';
+import {
+  downloadBenuHqExcel, downloadExtraExcel, getExtraWeek, getPdaWeek, getRosterWeek, weekOf,
+} from './benuExportService';
 
 interface Props {
   onClose: () => void;
@@ -36,6 +39,11 @@ export default function BenuOverview({ onClose }: Props) {
   const [onlyExtra, setOnlyExtra] = useState(false);
   const [onlyOpen, setOnlyOpen] = useState(false);
 
+  const [exportDate, setExportDate] = useState(isoDaysAgo(0));
+  const [exportBusy, setExportBusy] = useState<'hq' | 'extra' | null>(null);
+  const [exportError, setExportError] = useState('');
+  const wk = useMemo(() => weekOf(exportDate), [exportDate]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -53,6 +61,31 @@ export default function BenuOverview({ onClose }: Props) {
 
   const totalExtra = useMemo(
     () => shown.reduce((sum, r) => sum + (r.extra_minutes ?? 0), 0), [shown]);
+
+  async function downloadHq() {
+    setExportBusy('hq');
+    setExportError('');
+    try {
+      const [roster, pda] = await Promise.all([getRosterWeek(wk.from, wk.to), getPdaWeek(wk.from, wk.to)]);
+      downloadBenuHqExcel(roster, pda, wk.isoWeek, wk.year);
+    } catch (e: any) {
+      setExportError(e?.message ?? 'Exporteren mislukt.');
+    } finally {
+      setExportBusy(null);
+    }
+  }
+
+  async function downloadExtra() {
+    setExportBusy('extra');
+    setExportError('');
+    try {
+      downloadExtraExcel(await getExtraWeek(wk.from, wk.to), wk.isoWeek, wk.year);
+    } catch (e: any) {
+      setExportError(e?.message ?? 'Exporteren mislukt.');
+    } finally {
+      setExportBusy(null);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -150,6 +183,35 @@ export default function BenuOverview({ onClose }: Props) {
               </table>
             </div>
           )}
+
+          <hr className="border-slate-200" />
+
+          <div className="pt-4 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-700">Week exporteren</h3>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <label>
+                <span className="text-slate-500 mr-1.5">Week van</span>
+                <input type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)}
+                  className="border border-slate-300 rounded-lg px-2 py-1 bg-white" />
+              </label>
+              <span className="text-slate-500">
+                Week {wk.isoWeek} · {wk.from} t/m {wk.to} · {wk.parity === 'even' ? 'even' : 'oneven'}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={downloadHq} disabled={!!exportBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm bg-green-700 text-white hover:bg-green-800 disabled:opacity-50">
+                <Download size={14} />
+                {exportBusy === 'hq' ? 'Bezig…' : 'Roostertijden + PDA (BENU HQ)'}
+              </button>
+              <button onClick={downloadExtra} disabled={!!exportBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-50">
+                <Download size={14} />
+                {exportBusy === 'extra' ? 'Bezig…' : 'Extra tijd per apotheek'}
+              </button>
+            </div>
+            {exportError && <p className="text-sm text-red-600">{exportError}</p>}
+          </div>
         </div>
       </div>
     </div>
