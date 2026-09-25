@@ -17,6 +17,7 @@ const emptyForm = (pharmacyId: string): ScheduleLineInput => ({
   weekday: 1,
   startTime: '09:00',
   budgetedEndTime: null,
+  weekParity: 'both',
   courierId: null,
   transportMode: 'bike',
   carIsOwn: null,
@@ -64,7 +65,7 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
     setForm({
       pharmacyId, weekday: l.weekday, startTime: l.startTime, budgetedEndTime: l.budgetedEndTime,
       courierId: l.courierId, transportMode: l.transportMode, carIsOwn: l.carIsOwn,
-      startDate: l.startDate, endDate: l.endDate,
+      startDate: l.startDate, endDate: l.endDate, weekParity: l.weekParity,
     });
   }
 
@@ -128,6 +129,11 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
               <li key={l.id} className={`flex items-center justify-between py-2 text-sm ${l.isActive ? '' : 'opacity-50'}`}>
                 <div>
                   <span className="font-medium">{WEEKDAY_LABELS_LONG[l.weekday - 1]}</span>
+                  {l.weekParity !== 'both' && (
+                    <span className="text-xs text-slate-400 ml-0.5">
+                      ({l.weekParity === 'even' ? 'even' : 'oneven'})
+                    </span>
+                  )}
                   {' · '}{l.startTime}{l.budgetedEndTime ? `–${l.budgetedEndTime}` : ''}
                   {' · '}{l.courierId ? (courierName.get(l.courierId) ?? 'Koerier') : 'Open'}
                   {' · '}{TRANSPORT_LABELS[l.transportMode]}
@@ -170,6 +176,25 @@ export default function PharmacySchedule({ pharmacyId, pharmacyName, onClose, on
                     className="w-full border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
                     {WEEKDAY_LABELS.map((lbl, i) => <option key={i} value={i + 1}>{lbl}</option>)}
                   </select>
+                </label>
+                <label className="text-sm">
+                  <span className="block font-medium mb-1">Weken</span>
+                  <div className="flex items-center gap-1">
+                    {(['both', 'even', 'odd'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setForm({ ...form, weekParity: v })}
+                        className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                          form.weekParity === v
+                            ? 'bg-green-600 text-white border-green-600 font-semibold'
+                            : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400'
+                        }`}
+                      >
+                        {v === 'both' ? 'Alle weken' : v === 'even' ? 'Even weken' : 'Oneven weken'}
+                      </button>
+                    ))}
+                  </div>
                 </label>
                 <label className="text-sm">
                   <span className="block font-medium mb-1">Koerier <span className="text-slate-400 font-normal">(leeg = open)</span></span>

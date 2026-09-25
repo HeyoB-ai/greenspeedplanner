@@ -21,6 +21,7 @@ function toLine(r: any): ScheduleLine {
     carIsOwn: r.car_is_own,
     startDate: r.start_date,
     endDate: r.end_date,
+    weekParity: r.week_parity ?? 'both',
     isActive: r.is_active,
   };
 }
@@ -36,6 +37,7 @@ function toRow(input: ScheduleLineInput) {
     car_is_own: input.carIsOwn,
     start_date: input.startDate,
     end_date: input.endDate,
+    week_parity: input.weekParity,
   };
 }
 

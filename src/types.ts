@@ -104,6 +104,10 @@ export interface ScheduleLine {
   carIsOwn: boolean | null;
   startDate: string;             // 'YYYY-MM-DD'
   endDate: string | null;
+  // Welke ISO-weken deze roosterregel actief is: even weeknummers, oneven,
+  // of alle (both = standaard). Migratie 045. Zie kolomcomment voor de
+  // 53-wekenkwestie.
+  weekParity: 'even' | 'odd' | 'both';
   isActive: boolean;
 }
 
