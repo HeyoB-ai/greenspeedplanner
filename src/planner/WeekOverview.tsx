@@ -443,12 +443,12 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
       <div className="overflow-x-auto border border-slate-200 rounded-lg">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="sticky left-0 z-10 bg-slate-50 text-left font-semibold px-3 py-2 border-b border-slate-200 min-w-[160px]">
+            <tr className="bg-slate-50 sticky top-0 z-20">
+              <th className="sticky left-0 z-30 bg-slate-50 text-left font-semibold px-3 py-2 border-b border-slate-200 min-w-[160px]">
                 Apotheek
               </th>
               {days.map((d, i) => (
-                <th key={i} className="px-2 py-2 border-b border-l border-slate-200 min-w-[130px]">
+                <th key={i} className="bg-slate-50 px-2 py-2 border-b border-l border-slate-200 min-w-[130px]">
                   <button
                     onClick={() => setSelectedDay(d)}
                     className="w-full hover:text-green-700"
