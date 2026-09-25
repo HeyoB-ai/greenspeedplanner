@@ -440,7 +440,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           loading={loading}
         />
       ) : (
-      <div className="overflow-x-auto border border-slate-200 rounded-lg">
+      <div className="overflow-x-auto overflow-y-auto border border-slate-200 rounded-lg" style={{ maxHeight: 'calc(100vh - 14rem)' }}>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-slate-50 sticky top-0 z-20">
