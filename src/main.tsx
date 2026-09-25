@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import DeclarationPage from './declaration/DeclarationPage';
 import ExtraWorkPage from './extrawork/ExtraWorkPage';
+import BenuCourierPage from './benu/BenuCourierPage';
+import BenuPharmacyPage from './benu/BenuPharmacyPage';
 import './index.css';
 
 // Twee ingangen in één bundel. /declaratie?t=<token> is de pagina uit de
@@ -15,11 +17,15 @@ import './index.css';
 const path = window.location.pathname.replace(/\/+$/, '');
 const token = new URLSearchParams(window.location.search).get('t') ?? '';
 
-// Drie ingangen in één bundel. /declaratie is voor de koerier, /meerwerk voor de
-// apotheek; allebei zonder inlog, dus allebei vóór App met zijn sessiecontrole.
+// Vier ingangen in één bundel. /declaratie is voor de koerier, /meerwerk voor de
+// apotheek, /benu de BENU-tijdinvoer van de koerier en /benu-ph de reactie van
+// de apotheek daarop; alle vier zonder inlog, dus alle vier vóór App met zijn
+// sessiecontrole.
 function Root() {
   if (path === '/declaratie') return <DeclarationPage token={token} />;
   if (path === '/meerwerk') return <ExtraWorkPage token={token} />;
+  if (path === '/benu') return <BenuCourierPage token={token} />;
+  if (path === '/benu-ph') return <BenuPharmacyPage token={token} />;
   return <App />;
 }
 
