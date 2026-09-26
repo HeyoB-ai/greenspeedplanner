@@ -223,6 +223,11 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     [pharmacies, hiddenPharmacyIds],
   );
 
+  // Alleen actieve koeriers in de keuzelijst. De volledige lijst blijft nodig
+  // voor de koeriersweergave: anders verdwijnen diensten van iemand die uit
+  // dienst is uit eerdere weken.
+  const activeCouriers = useMemo(() => couriers.filter((c) => c.isActive), [couriers]);
+
   const visiblePharmacies = useMemo(() => {
     let list = pharmacies.filter((p) => !hiddenPharmacyIds.has(p.id));
     if (onlyWithShifts) list = list.filter((p) => (grid.get(p.id)?.size ?? 0) > 0);
@@ -445,7 +450,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
           >
             <option value="all">Alle</option>
             <option value="open">Open (niet toegewezen)</option>
-            {couriers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {activeCouriers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </label>
         <label className="flex items-center gap-1.5 cursor-pointer">

@@ -69,12 +69,23 @@ export async function setPharmacyCity(pharmacyId: string, city: string | null): 
 // spiegel loopt uiteen: append-only + handmatig bewerkbaar).
 export async function getCouriers(): Promise<Courier[]> {
   const sb = requireClient();
-  const [{ data: profiles, error: pErr }, { data: cpa, error: cErr }] = await Promise.all([
+  const [
+    { data: profiles, error: pErr }, { data: cpa, error: cErr }, { data: emps, error: eErr },
+  ] = await Promise.all([
     sb.from('user_profiles').select('id, name').eq('role', 'courier').order('name', { ascending: true }),
     sb.from('courier_pharmacy_access').select('courier_id, pharmacy_id'),
+    sb.from('employees_active').select('user_profile_id, is_active').not('user_profile_id', 'is', null),
   ]);
   if (pErr) throw pErr;
   if (cErr) throw cErr;
+  if (eErr) throw eErr;
+
+  // Per profiel: is er een gekoppelde medewerker die vandaag in dienst is.
+  // Ontbreekt de koppeling, dan staat het profiel niet in deze map.
+  const activeByProfile = new Map<string, boolean>();
+  (emps ?? []).forEach((r: any) => {
+    activeByProfile.set(r.user_profile_id, activeByProfile.get(r.user_profile_id) === true || r.is_active === true);
+  });
 
   const byCourier = new Map<string, string[]>();
   (cpa ?? []).forEach((r: any) => {
@@ -87,6 +98,7 @@ export async function getCouriers(): Promise<Courier[]> {
     id: r.id,
     name: r.name,
     pharmacyIds: byCourier.get(r.id) ?? [],
+    isActive: activeByProfile.get(r.id) ?? true,
   }));
 }
 

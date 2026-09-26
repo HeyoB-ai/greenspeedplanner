@@ -56,6 +56,9 @@ export interface Courier {
   id: string;
   name: string;
   pharmacyIds: string[]; // user_profiles.pharmacy_ids
+  // Uit employees_active via user_profile_id. Zonder gekoppelde medewerker
+  // telt een koerier als actief: niet gekoppeld is geen reden om te verbergen.
+  isActive: boolean;
 }
 
 // Rij uit shifts, verrijkt met de gekoppelde apotheek-/instelling-ids en
