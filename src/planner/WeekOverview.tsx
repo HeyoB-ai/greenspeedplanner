@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   ChevronRight as ChevronCollapsed, Plus, Users,
@@ -39,6 +39,17 @@ interface Props {
   refreshSignal: number;
 }
 
+const HIDDEN_PHARMACIES_KEY = 'gs-hidden-pharmacies';
+
+function loadHiddenPharmacies(): Set<string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HIDDEN_PHARMACIES_KEY) ?? '[]');
+    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
 export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedule, onChanged, refreshSignal }: Props) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
@@ -49,7 +60,12 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [pharmacyFilter, setPharmacyFilter] = useState('');
+  // Verborgen apotheken; leeg = alles zichtbaar. Blijft bewaard over een
+  // herlaadbeurt heen, want wie zijn eigen regio afbakent wil dat niet elke
+  // ochtend opnieuw doen.
+  const [hiddenPharmacyIds, setHiddenPharmacyIds] = useState<Set<string>>(loadHiddenPharmacies);
+  const [showPharmacyFilter, setShowPharmacyFilter] = useState(false);
+  const pharmacyFilterRef = useRef<HTMLDivElement>(null);
   const [courierFilter, setCourierFilter] = useState<CourierFilter>('all');
   const [onlyWithShifts, setOnlyWithShifts] = useState(false);
   const [onlyDrafts, setOnlyDrafts] = useState(false);
@@ -177,12 +193,41 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     [pharmacies],
   );
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIDDEN_PHARMACIES_KEY, JSON.stringify([...hiddenPharmacyIds]));
+    } catch { /* opslag geblokkeerd: dan geldt de keuze alleen deze sessie */ }
+  }, [hiddenPharmacyIds]);
+
+  useEffect(() => {
+    if (!showPharmacyFilter) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!pharmacyFilterRef.current?.contains(e.target as Node)) setShowPharmacyFilter(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showPharmacyFilter]);
+
+  function togglePharmacy(id: string) {
+    setHiddenPharmacyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Alleen ids die nog bestaan tellen mee; een opgeheven apotheek in de
+  // opgeslagen lijst zou anders eeuwig als "verborgen" in de knop blijven staan.
+  const hiddenCount = useMemo(
+    () => pharmacies.filter((p) => hiddenPharmacyIds.has(p.id)).length,
+    [pharmacies, hiddenPharmacyIds],
+  );
+
   const visiblePharmacies = useMemo(() => {
-    let list = pharmacies;
-    if (pharmacyFilter) list = list.filter((p) => p.id === pharmacyFilter);
+    let list = pharmacies.filter((p) => !hiddenPharmacyIds.has(p.id));
     if (onlyWithShifts) list = list.filter((p) => (grid.get(p.id)?.size ?? 0) > 0);
     return list;
-  }, [pharmacies, pharmacyFilter, onlyWithShifts, grid]);
+  }, [pharmacies, hiddenPharmacyIds, onlyWithShifts, grid]);
 
   // Apotheken gegroepeerd op plaats, alfabetisch, met "Overig" onderaan — dat is
   // een restgroep en geen plaats, dus die hoort niet tussen de O's.
@@ -204,11 +249,12 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   }, [visiblePharmacies]);
 
   // Diensten voor de koeriersweergave: dezelfde filters als het raster, plus het
-  // apotheekfilter — dat filtert daar rijen weg en hier diensten.
+  // apotheekfilter — dat filtert daar rijen weg en hier diensten. Een dienst
+  // blijft staan zolang één van zijn apotheken zichtbaar is.
   const courierViewShifts = useMemo(
     () => shifts.filter((s) => passesFilters(s)
-      && (!pharmacyFilter || s.pharmacyIds.includes(pharmacyFilter))),
-    [shifts, courierFilter, onlyDrafts, draftKind, pharmacyFilter],
+      && (s.pharmacyIds.length === 0 || s.pharmacyIds.some((id) => !hiddenPharmacyIds.has(id)))),
+    [shifts, courierFilter, onlyDrafts, draftKind, hiddenPharmacyIds],
   );
 
   function toggleGroup(city: string) {
@@ -361,16 +407,36 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-1.5">
-          <span className="text-slate-500">Apotheek</span>
-          <select
-            value={pharmacyFilter} onChange={(e) => setPharmacyFilter(e.target.value)}
-            className="border border-slate-300 rounded-lg px-2 py-1"
+        <div ref={pharmacyFilterRef} className="relative">
+          <button
+            onClick={() => setShowPharmacyFilter((v) => !v)}
+            className={`inline-flex items-center gap-1 border rounded-lg px-2 py-1 bg-white hover:bg-slate-50 ${
+              hiddenCount > 0 ? 'border-green-600 text-green-700' : 'border-slate-300'
+            }`}
+            aria-expanded={showPharmacyFilter}
           >
-            <option value="">Alle</option>
-            {pharmacies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </label>
+            {hiddenCount > 0 ? `Apotheken (${hiddenCount} verborgen)` : 'Apotheken'}
+            <ChevronDown size={14} />
+          </button>
+          {showPharmacyFilter && (
+            <div className="absolute left-0 top-full mt-1 z-50 w-72 bg-white border border-slate-200 rounded-lg shadow-lg">
+              <div className="flex gap-3 px-3 py-2 border-b border-slate-100 text-xs">
+                <button onClick={() => setHiddenPharmacyIds(new Set())}
+                  className="text-green-700 hover:underline">Alles aan</button>
+                <button onClick={() => setHiddenPharmacyIds(new Set(pharmacies.map((p) => p.id)))}
+                  className="text-slate-600 hover:underline">Alles uit</button>
+              </div>
+              <div className="max-h-72 overflow-y-auto py-1">
+                {pharmacies.map((p) => (
+                  <label key={p.id} className="flex items-center gap-2 px-3 py-1 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={!hiddenPharmacyIds.has(p.id)} onChange={() => togglePharmacy(p.id)} />
+                    <span className="truncate">{p.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <label className="flex items-center gap-1.5">
           <span className="text-slate-500">Koerier</span>
           <select
