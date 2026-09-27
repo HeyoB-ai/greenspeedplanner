@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Info, Receipt, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ChevronDown, Info, Receipt, X } from 'lucide-react';
 import { Chain, InvoiceLine, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
 import {
-  amount, euro, getChainInvoiceLines, getChains, getInvoiceLines, hoursText, sumLines,
+  amount, euro, getChainInvoiceLines, getChains, getInvoiceLines, hoursText, InvoiceTotals, sumLines,
 } from './invoiceService';
 import { TYPE_STYLES } from './constants';
 
@@ -22,6 +22,26 @@ function lastMonth(): { from: string; to: string } {
   return { from: iso(first), to: iso(last) };
 }
 
+// Uitgevinkte apotheken, niet de aangevinkte: een apotheek die er later bijkomt
+// staat dan vanzelf aan, net als bij het apotheekfilter in het weekoverzicht.
+const DESELECTED_KEY = 'gs-invoicing-deselected';
+
+function loadDeselected(): Set<string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DESELECTED_KEY) ?? '[]');
+    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+// Eén blok in het overzicht: een apotheek (filiaalmodus) of de hele keten.
+interface Section {
+  key: string;
+  name: string;
+  lines: InvoiceLine[];
+}
+
 // Factuuroverzicht per apotheek per periode (fase 7, migratie 025).
 //
 // Dit genereert géén factuur en verstuurt niets: het is een overzicht waar een
@@ -30,14 +50,16 @@ function lastMonth(): { from: string; to: string } {
 // verdeelregel — een tariefwijziging in de database werkt vanzelf door.
 export default function Invoicing({ onClose }: Props) {
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
-  const [pharmacyId, setPharmacyId] = useState('');
+  const [deselected, setDeselected] = useState<Set<string>>(loadDeselected);
+  const [showPicker, setShowPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   // Aan wie factureren we: het filiaal of de keten. Alleen zinvol bij een
   // keten met de splitsing aan; anders staat er in de ketenkolom overal 0.
   const [chains, setChains] = useState<Chain[]>([]);
   const [mode, setMode] = useState<'pharmacy' | 'chain'>('pharmacy');
   const [chainId, setChainId] = useState('');
   const [period, setPeriod] = useState(lastMonth);
-  const [lines, setLines] = useState<InvoiceLine[]>([]);
+  const [sections, setSections] = useState<Section[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -46,39 +68,81 @@ export default function Invoicing({ onClose }: Props) {
       .then(([ps, cs]) => {
         setPharmacies(ps);
         setChains(cs);
-        if (ps.length > 0) setPharmacyId((cur) => cur || ps[0].id);
         const split = cs.filter((c) => c.split_extra_work);
         if (split.length > 0) setChainId((cur) => cur || split[0].group_id);
       })
       .catch((e: any) => setError(e?.message ?? 'Apotheken laden mislukt.'));
   }, []);
 
+  const chainName = useMemo(
+    () => chains.find((c) => c.group_id === chainId)?.group_name ?? '', [chains, chainId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DESELECTED_KEY, JSON.stringify([...deselected]));
+    } catch { /* opslag geblokkeerd: dan geldt de keuze alleen deze sessie */ }
+  }, [deselected]);
+
+  useEffect(() => {
+    if (!showPicker) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!pickerRef.current?.contains(e.target as Node)) setShowPicker(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [showPicker]);
+
+  // In de volgorde van getPharmacies(), dus op naam.
+  const selected = useMemo(
+    () => pharmacies.filter((p) => !deselected.has(p.id)), [pharmacies, deselected]);
+  // Stabiele sleutel voor het laden: een nieuwe Set met dezelfde inhoud mag
+  // niet opnieuw alle aanroepen afvuren.
+  const selectedKey = selected.map((p) => p.id).join(',');
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    const load = mode === 'chain'
+    const load: Promise<Section[]> = mode === 'chain'
       ? getChainInvoiceLines(
           pharmacies.filter((p) => p.groupId === chainId).map((p) => p.id),
           period.from, period.to)
-      : (pharmacyId ? getInvoiceLines(pharmacyId, period.from, period.to) : Promise.resolve([]));
+          .then((rows) => [{ key: chainId, name: `${chainName} (centraal)`, lines: rows }])
+      // Eén aanroep per apotheek, tegelijk, zoals de ketenfactuur dat al doet.
+      // Een apotheek zonder regels in de periode krijgt geen blok.
+      : Promise.all(selected.map((p) =>
+          getInvoiceLines(p.id, period.from, period.to)
+            .then((rows) => ({ key: p.id, name: p.name, lines: rows }))))
+          .then((all) => all.filter((sec) => sec.lines.length > 0));
 
     load
-      .then((rows) => { if (!cancelled) { setLines(rows); setError(''); } })
-      .catch((e: any) => { if (!cancelled) { setLines([]); setError(e?.message ?? 'Laden mislukt.'); } })
+      .then((rows) => { if (!cancelled) { setSections(rows); setError(''); } })
+      .catch((e: any) => { if (!cancelled) { setSections([]); setError(e?.message ?? 'Laden mislukt.'); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [mode, pharmacyId, chainId, pharmacies, period.from, period.to]);
+  // selected zit via selectedKey in de afhankelijkheden.
+  }, [mode, selectedKey, chainId, chainName, pharmacies, period.from, period.to]);
 
+  const lines = useMemo(() => sections.flatMap((sec) => sec.lines), [sections]);
   const totals = useMemo(() => sumLines(lines), [lines]);
-  const pharmacyName = useMemo(
-    () => pharmacies.find((p) => p.id === pharmacyId)?.name ?? '', [pharmacies, pharmacyId]);
-  const chainName = useMemo(
-    () => chains.find((c) => c.group_id === chainId)?.group_name ?? '', [chains, chainId]);
   const splitChains = useMemo(() => chains.filter((c) => c.split_extra_work), [chains]);
   // In ketenmodus telt alleen het ketendeel; op een filiaalfactuur alleen het
   // filiaaldeel. Zonder splitsing is dat laatste gewoon het hele bedrag.
-  const invoiceTotal = mode === 'chain' ? totals.chain : totals.branch;
+  const invoiceTotal = (t: InvoiceTotals) => (mode === 'chain' ? t.chain : t.branch);
+
+  const pickerLabel = selected.length === 0
+    ? 'Geen apotheken'
+    : selected.length === 1
+      ? selected[0].name
+      : `${selected.length} apotheken geselecteerd`;
+
+  function togglePharmacy(id: string) {
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -129,15 +193,38 @@ export default function Invoicing({ onClose }: Props) {
                 </select>
               </label>
             ) : (
-              <label className="inline-flex items-center gap-1.5">
-                <span className="text-slate-500">Apotheek</span>
-                <select
-                  value={pharmacyId} onChange={(e) => setPharmacyId(e.target.value)}
-                  className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              <div ref={pickerRef} className="relative inline-flex items-center gap-1.5">
+                <span className="text-slate-500">Apotheken</span>
+                <button
+                  onClick={() => setShowPicker((v) => !v)}
+                  className="inline-flex items-center gap-1 border border-slate-300 rounded-lg px-2 py-1 bg-white hover:bg-slate-50 max-w-[18rem]"
+                  aria-expanded={showPicker}
                 >
-                  {pharmacies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
+                  <span className="truncate">{pickerLabel}</span>
+                  <ChevronDown size={14} className="shrink-0" />
+                </button>
+                {showPicker && (
+                  <div className="absolute left-0 top-full mt-1 z-50 w-72 bg-white border border-slate-200 rounded-lg shadow-lg">
+                    <div className="px-3 py-2 border-b border-slate-100 text-xs">
+                      {selected.length === pharmacies.length ? (
+                        <button onClick={() => setDeselected(new Set(pharmacies.map((p) => p.id)))}
+                          className="text-slate-600 hover:underline">Alles deselecteren</button>
+                      ) : (
+                        <button onClick={() => setDeselected(new Set())}
+                          className="text-green-700 hover:underline">Alles selecteren</button>
+                      )}
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1">
+                      {pharmacies.map((p) => (
+                        <label key={p.id} className="flex items-center gap-2 px-3 py-1 hover:bg-slate-50 cursor-pointer">
+                          <input type="checkbox" checked={!deselected.has(p.id)} onChange={() => togglePharmacy(p.id)} />
+                          <span className="truncate">{p.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             <label className="inline-flex items-center gap-1.5">
               <span className="text-slate-500">Van</span>
@@ -182,12 +269,19 @@ export default function Invoicing({ onClose }: Props) {
 
           {!loading && lines.length === 0 && !error && (
             <p className="text-sm text-slate-500">
-              Geen diensten voor {pharmacyName} in deze periode. Concepten tellen niet mee.
+              {mode === 'pharmacy' && selected.length === 0
+                ? 'Geen apotheken geselecteerd.'
+                : 'Geen diensten voor de gekozen apotheken in deze periode. Concepten tellen niet mee.'}
             </p>
           )}
 
-          {lines.length > 0 && (
-            <div className="overflow-x-auto">
+          {sections.map((sec) => {
+            const secTotals = sumLines(sec.lines);
+            return (
+            <div key={sec.key} className="overflow-x-auto">
+              {mode === 'pharmacy' && sections.length > 1 && (
+                <h3 className="text-sm font-semibold text-slate-800 pt-2 pb-1">{sec.name}</h3>
+              )}
               <table className="w-full min-w-[78rem] text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
@@ -210,7 +304,7 @@ export default function Invoicing({ onClose }: Props) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {lines.map((l) => (
+                  {sec.lines.map((l) => (
                     <tr key={`${l.shift_id}`} className={l.incomplete ? 'bg-amber-50/60' : undefined}>
                       <td className="py-2 pr-3 align-top tabular-nums whitespace-nowrap">{l.shift_date}</td>
                       <td className="py-2 px-3 align-top">
@@ -278,25 +372,37 @@ export default function Invoicing({ onClose }: Props) {
                 <tfoot>
                   <tr className="border-t-[3px] border-slate-800 bg-slate-50 font-semibold text-slate-900">
                     <td className="py-2.5 pr-3" colSpan={4}>
-                      {lines.length} regel{lines.length === 1 ? '' : 's'} ·{' '}
-                      {mode === 'chain' ? `${chainName} (centraal)` : pharmacyName}
-                      {mode === 'chain' && totals.branch > 0 && (
+                      {sec.lines.length} regel{sec.lines.length === 1 ? '' : 's'} · {sec.name}
+                      {mode === 'chain' && secTotals.branch > 0 && (
                         <span className="font-normal text-slate-500">
-                          {' '}— {euro(totals.branch)} gaat naar de filialen
+                          {' '}— {euro(secTotals.branch)} gaat naar de filialen
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{hoursText(totals.billedMinutes)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{hoursText(secTotals.billedMinutes)}</td>
                     <td className="py-2.5 px-3"></td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.hours)}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.start)}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.travel)}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.expenses)}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(totals.urgent)}</td>
-                    <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(invoiceTotal)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(secTotals.hours)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(secTotals.start)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(secTotals.travel)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(secTotals.expenses)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap">{euro(secTotals.urgent)}</td>
+                    <td className="py-2.5 pl-3 text-right tabular-nums whitespace-nowrap text-base">{euro(invoiceTotal(secTotals))}</td>
                   </tr>
                 </tfoot>
               </table>
+            </div>
+            );
+          })}
+
+          {/* Eindtotaal over alle apotheken. Alleen bij meer dan één blok; bij
+              één staat hetzelfde getal al onder de tabel. */}
+          {mode === 'pharmacy' && sections.length > 1 && (
+            <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-slate-800 text-white px-4 py-3">
+              <span className="text-sm">
+                Totaal {sections.length} apotheken · {lines.length} regel{lines.length === 1 ? '' : 's'} ·{' '}
+                {hoursText(totals.billedMinutes)} uur
+              </span>
+              <span className="text-lg font-semibold tabular-nums">{euro(invoiceTotal(totals))}</span>
             </div>
           )}
 
