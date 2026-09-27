@@ -318,7 +318,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
               ) : (
                 <div className="space-y-1">
                   {cellShifts.map((s) => (
-                    <div key={s.id} className={`group relative rounded-md ${s.sickLeave ? 'bg-red-50' : ''}`}>
+                    <div key={s.id} className={`rounded-md ${s.sickLeave ? 'bg-red-50' : ''}`}>
                       <div className="flex items-center">
                         <div className="min-w-0 flex-1">
                           <ShiftChip shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
@@ -326,17 +326,21 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                         {s.sickLeave && (
                           <span className="ml-1 inline-flex items-center rounded bg-red-600 px-1 py-0.5 text-xs font-medium text-white" title="Ziek gemeld">Z</span>
                         )}
+                        {s.courierId && (
+                          <button
+                            onClick={() => toggleSickLeave(s)}
+                            disabled={sickBusyId === s.id}
+                            className={`ml-1 shrink-0 border bg-white rounded px-2 py-0.5 text-xs font-medium shadow-sm disabled:opacity-60 ${
+                              s.sickLeave
+                                ? 'border-green-400 text-green-700 hover:bg-green-50'
+                                : 'border-red-400 text-red-600 hover:bg-red-50'
+                            }`}
+                            title={s.sickLeave ? 'Ziekmelding terugdraaien' : 'Koerier ziek melden voor deze dienst'}
+                          >
+                            {sickBusyId === s.id ? '…' : s.sickLeave ? 'Beter' : 'Ziek'}
+                          </button>
+                        )}
                       </div>
-                      {s.courierId && (
-                        <button
-                          onClick={() => toggleSickLeave(s)}
-                          disabled={sickBusyId === s.id}
-                          className="absolute -top-1.5 -right-1.5 z-[5] rounded bg-white border border-slate-300 px-1 text-[10px] leading-4 text-slate-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 hover:border-red-400 hover:text-red-700 disabled:opacity-60"
-                          title={s.sickLeave ? 'Ziekmelding terugdraaien' : 'Koerier ziek melden voor deze dienst'}
-                        >
-                          {sickBusyId === s.id ? '…' : s.sickLeave ? 'Beter' : 'Ziek'}
-                        </button>
-                      )}
                     </div>
                   ))}
                   <button
