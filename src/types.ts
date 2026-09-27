@@ -89,6 +89,9 @@ export interface Shift {
   timingReliable: boolean;
   // Herkomst: gevuld = uit een roosterregel gegenereerd; null = handmatig.
   scheduleId: string | null;
+  // Koerier ziek gemeld. De dienst blijft staan voor uitbetaling, maar krijgt
+  // geen aankondigings- of declaratiemail (migratie 049).
+  sickLeave: boolean;
   // Alleen bij shiftType 'urgent': het telefonisch afgesproken bedrag richting de
   // apotheek, plus een toelichting. Bij spoed is dit het HELE factuurbedrag.
   urgentAmount: number | null;

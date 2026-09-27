@@ -177,6 +177,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
           transportMode, carIsOwn, description: null, pharmacyIds: selectedPharmacyIds,
           pharmacyMinutes: {}, urgentAmount: null, urgentNote: null,
           institutionIds: [], timingReliable, scheduleId: shift?.scheduleId ?? null,
+          sickLeave: shift?.sickLeave ?? false,
         };
         const hard = others.filter((o) => pairLevel(probe, o) === 'hard');
         if (hard.length > 0) { setConflictPrompt(hard); setSaving(false); return; }

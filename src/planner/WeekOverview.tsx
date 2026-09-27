@@ -4,7 +4,9 @@ import {
   ChevronRight as ChevronCollapsed, Plus, Users,
 } from 'lucide-react';
 import { Courier, Pharmacy, Shift, SmsLogEntry } from '../types';
-import { confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek } from './plannerService';
+import {
+  confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek, markShiftSickLeave,
+} from './plannerService';
 import { getSmsStatusForShifts } from './smsService';
 import {
   addDays, formatDayHeader, isoWeekNumber, startOfWeek, toISODate, weekDays,
@@ -80,6 +82,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [sickBusyId, setSickBusyId] = useState<string | null>(null);
 
   const days = useMemo(() => weekDays(weekStart), [weekStart]);
   const weekStartISO = toISODate(weekStart);
@@ -185,6 +188,21 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     } finally {
       setConfirmBusy(false);
       setShowBulkConfirm(false);
+    }
+  }
+
+  // Ziek melden gaat meteen, zonder bevestiging: het is met dezelfde knop weer
+  // terug te draaien, en er vertrekt niets naar de koerier.
+  async function toggleSickLeave(s: Shift) {
+    setSickBusyId(s.id);
+    setError('');
+    try {
+      await markShiftSickLeave(s.id, !s.sickLeave);
+      onChanged();
+    } catch (e: any) {
+      setError(e?.message ?? 'Ziekmelding opslaan mislukt.');
+    } finally {
+      setSickBusyId(null);
     }
   }
 
@@ -300,7 +318,26 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
               ) : (
                 <div className="space-y-1">
                   {cellShifts.map((s) => (
-                    <ShiftChip key={s.id} shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
+                    <div key={s.id} className={`group relative rounded-md ${s.sickLeave ? 'bg-red-50' : ''}`}>
+                      <div className="flex items-center">
+                        <div className="min-w-0 flex-1">
+                          <ShiftChip shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
+                        </div>
+                        {s.sickLeave && (
+                          <span className="ml-1 inline-flex items-center rounded bg-red-600 px-1 py-0.5 text-xs font-medium text-white" title="Ziek gemeld">Z</span>
+                        )}
+                      </div>
+                      {s.courierId && (
+                        <button
+                          onClick={() => toggleSickLeave(s)}
+                          disabled={sickBusyId === s.id}
+                          className="absolute -top-1.5 -right-1.5 z-[5] rounded bg-white border border-slate-300 px-1 text-[10px] leading-4 text-slate-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 hover:border-red-400 hover:text-red-700 disabled:opacity-60"
+                          title={s.sickLeave ? 'Ziekmelding terugdraaien' : 'Koerier ziek melden voor deze dienst'}
+                        >
+                          {sickBusyId === s.id ? '…' : s.sickLeave ? 'Beter' : 'Ziek'}
+                        </button>
+                      )}
+                    </div>
                   ))}
                   <button
                     onClick={() => onCreate(p.id, dayISO)}

@@ -132,7 +132,7 @@ export async function getShiftsForWeek(
 
   const { data: shifts, error } = await sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id, urgent_amount, urgent_note')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id, urgent_amount, urgent_note, sick_leave')
     .gte('shift_date', startDate)
     .lte('shift_date', endDate)
     .order('start_time', { ascending: true });
@@ -187,6 +187,7 @@ export async function getShiftsForWeek(
     institutionIds: institutionsByShift.get(s.id) ?? [],
     timingReliable: s.timing_reliable ?? false,
     scheduleId: s.schedule_id ?? null,
+    sickLeave: s.sick_leave === true,
   }));
 }
 
@@ -197,7 +198,7 @@ export async function getCourierShiftsOnDate(
   const sb = requireClient();
   let q = sb
     .from('shifts')
-    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id')
+    .select('id, courier_id, shift_type, shift_date, start_time, budgeted_end_time, status, transport_mode, car_is_own, description, timing_reliable, schedule_id, sick_leave')
     .eq('courier_id', courierId)
     .eq('shift_date', dateISO);
   if (excludeShiftId) q = q.neq('id', excludeShiftId);
@@ -236,6 +237,7 @@ export async function getCourierShiftsOnDate(
     institutionIds: [],
     timingReliable: s.timing_reliable ?? false,
     scheduleId: s.schedule_id ?? null,
+    sickLeave: s.sick_leave === true,
   }));
 }
 
@@ -454,5 +456,16 @@ export async function confirmShifts(shiftIds: string[]): Promise<void> {
     })
     .in('id', shiftIds)
     .eq('status', 'draft');
+  if (error) throw error;
+}
+
+// Ziek melden of terugdraaien. Alleen de vlag: tijden, koerier en apotheken
+// blijven staan, want de dienst wordt gewoon uitbetaald.
+export async function markShiftSickLeave(shiftId: string, sickLeave: boolean): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb
+    .from('shifts')
+    .update({ sick_leave: sickLeave })
+    .eq('id', shiftId);
   if (error) throw error;
 }
