@@ -326,7 +326,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                         {s.sickLeave && (
                           <span className="ml-1 inline-flex items-center rounded bg-red-600 px-1 py-0.5 text-xs font-medium text-white" title="Ziek gemeld">Z</span>
                         )}
-                        {s.courierId && (
+                        {s.courierId && s.status !== 'draft' && (
                           <button
                             onClick={() => toggleSickLeave(s)}
                             disabled={sickBusyId === s.id}
