@@ -253,14 +253,17 @@ export default function App() {
           De twee getallen staan met opzet niet bij elkaar opgeteld: verlopen zonder
           mislukt betekent dat er nooit iets is geprobeerd (poort dicht, geen adres),
           mislukt zonder verlopen betekent dat de provider het weigerde. Die
-          verhouding is de diagnose. */}
-      {attention.mailFailed + attention.mailExpired > 0 && (
+          verhouding is de diagnose.
+
+          Alleen voor superusers: een planner kan er zelf niets aan doen, en de
+          oorzaak (mailpoort, allowlist, provider) zit in de beheerinstellingen. */}
+      {user.role === 'superuser' && attention.mailFailed + attention.mailExpired > 0 && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5">
           <div className="flex items-start gap-2.5">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-600" />
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-amber-900">
-                <span>Vastgelopen post</span>
+                <span>Vastgelopen berichten</span>
                 {attention.mailFailed > 0 && (
                   <span className="inline-flex items-center gap-1 bg-amber-200/70 text-amber-900 text-xs font-semibold px-2 py-0.5 rounded-full">
                     {attention.mailFailed} mislukt
@@ -273,9 +276,7 @@ export default function App() {
                 )}
               </div>
               <p className="mt-0.5 text-xs text-amber-700 leading-relaxed">
-                {attention.mailFailed > 0 && 'Mislukt = geprobeerd maar geweigerd — zie kolom ‘error’ in mail_outbox. '}
-                {attention.mailExpired > 0 && 'Verlopen = nooit verstuurd — controleer MAIL_LIVE, MAIL_ALLOWLIST en of elke koerier een e-mailadres heeft. '}
-                Deze berichten gaan niet alsnog uit.
+                Er staan berichten klaar die nooit verstuurd zijn. Neem contact op met de beheerder.
               </p>
             </div>
           </div>
