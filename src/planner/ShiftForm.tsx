@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Courier, Institution, Pharmacy, Shift, ShiftType, TransportMode } from '../types';
-import { createShift, getCouriers, getCourierShiftsOnDate, getInstitutions, getPharmacies, updateShift } from './plannerService';
+import {
+  createShift, getCouriers, getCourierShiftsOnDate, getInstitutions, getPharmacies, markShiftSickLeave, updateShift,
+} from './plannerService';
 import { pairLevel } from './conflicts';
 import { CAR_OWNER_OPTIONS, SHIFT_TYPES, TRANSPORT_LABELS, TYPE_STYLES } from './constants';
 
@@ -54,6 +56,7 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [sickBusy, setSickBusy] = useState(false);
   const [conflictPrompt, setConflictPrompt] = useState<Shift[] | null>(null);
 
   const pharmacyName = useMemo(() => new Map(pharmacies.map((p) => [p.id, p.name])), [pharmacies]);
@@ -186,6 +189,19 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
       }
     }
     await doSave();
+  }
+
+  async function toggleSickLeave(value: boolean) {
+    if (!shift) return;
+    setSickBusy(true);
+    setError('');
+    try {
+      await markShiftSickLeave(shift.id, value);
+      onSaved();
+    } catch (err: any) {
+      setError(err?.message ?? 'Ziekmelding opslaan mislukt.');
+      setSickBusy(false);
+    }
   }
 
   return (
@@ -424,6 +440,28 @@ export default function ShiftForm({ shift, initialPharmacyId, initialDateISO, on
             </span>
           </span>
         </label>
+
+        {/* Ziekmelding. Los van Opslaan: de vlag gaat meteen naar de database en
+            het scherm sluit, zodat het weekoverzicht direct de Z laat zien. */}
+        {isEdit && shift!.status !== 'draft' && (
+          <label className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer ${
+            shift!.sickLeave ? 'border-red-300 bg-red-50' : 'border-slate-200'
+          }`}>
+            <input
+              type="checkbox" checked={shift!.sickLeave} disabled={sickBusy || saving}
+              onChange={(e) => toggleSickLeave(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span className="text-sm">
+              <span className="font-medium">{sickBusy ? 'Opslaan…' : 'Ziek gemeld'}</span>
+              <span className="block text-xs text-slate-500">
+                De dienst blijft staan voor uitbetaling, maar de koerier krijgt geen declaratie- of
+                BENU-mail. Wordt direct opgeslagen en sluit dit scherm; andere wijzigingen hierboven
+                gaan dan niet mee.
+              </span>
+            </span>
+          </label>
+        )}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Courier, Pharmacy, Shift, SmsLogEntry } from '../types';
 import {
-  confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek, markShiftSickLeave,
+  confirmShifts, getInstitutions, getPharmacies, getCouriers, getShiftsForWeek,
 } from './plannerService';
 import { getSmsStatusForShifts } from './smsService';
 import {
@@ -82,7 +82,6 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const [sickBusyId, setSickBusyId] = useState<string | null>(null);
 
   const days = useMemo(() => weekDays(weekStart), [weekStart]);
   const weekStartISO = toISODate(weekStart);
@@ -188,21 +187,6 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
     } finally {
       setConfirmBusy(false);
       setShowBulkConfirm(false);
-    }
-  }
-
-  // Ziek melden gaat meteen, zonder bevestiging: het is met dezelfde knop weer
-  // terug te draaien, en er vertrekt niets naar de koerier.
-  async function toggleSickLeave(s: Shift) {
-    setSickBusyId(s.id);
-    setError('');
-    try {
-      await markShiftSickLeave(s.id, !s.sickLeave);
-      onChanged();
-    } catch (e: any) {
-      setError(e?.message ?? 'Ziekmelding opslaan mislukt.');
-    } finally {
-      setSickBusyId(null);
     }
   }
 
@@ -325,20 +309,6 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                         </div>
                         {s.sickLeave && (
                           <span className="ml-1 inline-flex items-center rounded bg-red-600 px-1 py-0.5 text-xs font-medium text-white" title="Ziek gemeld">Z</span>
-                        )}
-                        {s.courierId && s.status !== 'draft' && (
-                          <button
-                            onClick={() => toggleSickLeave(s)}
-                            disabled={sickBusyId === s.id}
-                            className={`ml-1 shrink-0 border bg-white rounded px-2 py-0.5 text-xs font-medium shadow-sm disabled:opacity-60 ${
-                              s.sickLeave
-                                ? 'border-green-400 text-green-700 hover:bg-green-50'
-                                : 'border-red-400 text-red-600 hover:bg-red-50'
-                            }`}
-                            title={s.sickLeave ? 'Ziekmelding terugdraaien' : 'Koerier ziek melden voor deze dienst'}
-                          >
-                            {sickBusyId === s.id ? '…' : s.sickLeave ? 'Beter' : 'Ziek'}
-                          </button>
                         )}
                       </div>
                     </div>
