@@ -22,19 +22,6 @@ function lastMonth(): { from: string; to: string } {
   return { from: iso(first), to: iso(last) };
 }
 
-// Uitgevinkte apotheken, niet de aangevinkte: een apotheek die er later bijkomt
-// staat dan vanzelf aan, net als bij het apotheekfilter in het weekoverzicht.
-const DESELECTED_KEY = 'gs-invoicing-deselected';
-
-function loadDeselected(): Set<string> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(DESELECTED_KEY) ?? '[]');
-    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === 'string')) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
 // Eén blok in het overzicht: een apotheek (filiaalmodus) of de hele keten.
 interface Section {
   key: string;
@@ -50,7 +37,9 @@ interface Section {
 // verdeelregel — een tariefwijziging in de database werkt vanzelf door.
 export default function Invoicing({ onClose }: Props) {
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
-  const [deselected, setDeselected] = useState<Set<string>>(loadDeselected);
+  // Aangevinkte apotheken. Bij openen leeg: je kiest bewust voor wie je een
+  // overzicht maakt, in plaats van eerst tientallen apotheken te laden.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showPicker, setShowPicker] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   // Aan wie factureren we: het filiaal of de keten. Alleen zinvol bij een
@@ -78,12 +67,6 @@ export default function Invoicing({ onClose }: Props) {
     () => chains.find((c) => c.group_id === chainId)?.group_name ?? '', [chains, chainId]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(DESELECTED_KEY, JSON.stringify([...deselected]));
-    } catch { /* opslag geblokkeerd: dan geldt de keuze alleen deze sessie */ }
-  }, [deselected]);
-
-  useEffect(() => {
     if (!showPicker) return;
     function onMouseDown(e: MouseEvent) {
       if (!pickerRef.current?.contains(e.target as Node)) setShowPicker(false);
@@ -94,7 +77,7 @@ export default function Invoicing({ onClose }: Props) {
 
   // In de volgorde van getPharmacies(), dus op naam.
   const selected = useMemo(
-    () => pharmacies.filter((p) => !deselected.has(p.id)), [pharmacies, deselected]);
+    () => pharmacies.filter((p) => selectedIds.has(p.id)), [pharmacies, selectedIds]);
   // Stabiele sleutel voor het laden: een nieuwe Set met dezelfde inhoud mag
   // niet opnieuw alle aanroepen afvuren.
   const selectedKey = selected.map((p) => p.id).join(',');
@@ -137,7 +120,7 @@ export default function Invoicing({ onClose }: Props) {
       : `${selected.length} apotheken geselecteerd`;
 
   function togglePharmacy(id: string) {
-    setDeselected((prev) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -205,19 +188,16 @@ export default function Invoicing({ onClose }: Props) {
                 </button>
                 {showPicker && (
                   <div className="absolute left-0 top-full mt-1 z-50 w-72 bg-white border border-slate-200 rounded-lg shadow-lg">
-                    <div className="px-3 py-2 border-b border-slate-100 text-xs">
-                      {selected.length === pharmacies.length ? (
-                        <button onClick={() => setDeselected(new Set(pharmacies.map((p) => p.id)))}
-                          className="text-slate-600 hover:underline">Alles deselecteren</button>
-                      ) : (
-                        <button onClick={() => setDeselected(new Set())}
-                          className="text-green-700 hover:underline">Alles selecteren</button>
-                      )}
+                    <div className="flex gap-3 px-3 py-2 border-b border-slate-100 text-xs">
+                      <button onClick={() => setSelectedIds(new Set(pharmacies.map((p) => p.id)))}
+                        className="text-green-700 hover:underline">Alles selecteren</button>
+                      <button onClick={() => setSelectedIds(new Set())}
+                        className="text-slate-600 hover:underline">Alles deselecteren</button>
                     </div>
                     <div className="max-h-72 overflow-y-auto py-1">
                       {pharmacies.map((p) => (
                         <label key={p.id} className="flex items-center gap-2 px-3 py-1 hover:bg-slate-50 cursor-pointer">
-                          <input type="checkbox" checked={!deselected.has(p.id)} onChange={() => togglePharmacy(p.id)} />
+                          <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => togglePharmacy(p.id)} />
                           <span className="truncate">{p.name}</span>
                         </label>
                       ))}
