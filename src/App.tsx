@@ -242,46 +242,6 @@ export default function App() {
       </header>
 
 
-      {/* Vastgelopen post (migratie 042). GEEN badge op een menu maar een balk,
-          en dat is een bewuste afwijking van hoe de ontbrekende nummers worden
-          getoond: daar zit "Beheer → Nummers" achter, hier is geen mailscherm om
-          naartoe te klikken. Een badge zou een getal tonen zonder ergens naartoe
-          te leiden; deze balk noemt de twee getallen apart én zegt waar je moet
-          kijken. Zelfde amberkleur als de feestdagenwaarschuwing hieronder, maar met
-          de aantallen als aparte chips en de uitleg op een tweede regel.
-
-          De twee getallen staan met opzet niet bij elkaar opgeteld: verlopen zonder
-          mislukt betekent dat er nooit iets is geprobeerd (poort dicht, geen adres),
-          mislukt zonder verlopen betekent dat de provider het weigerde. Die
-          verhouding is de diagnose.
-
-          Alleen voor superusers: een planner kan er zelf niets aan doen, en de
-          oorzaak (mailpoort, allowlist, provider) zit in de beheerinstellingen. */}
-      {user.role === 'superuser' && attention.mailFailed + attention.mailExpired > 0 && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-600" />
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-amber-900">
-                <span>Vastgelopen berichten</span>
-                {attention.mailFailed > 0 && (
-                  <span className="inline-flex items-center gap-1 bg-amber-200/70 text-amber-900 text-xs font-semibold px-2 py-0.5 rounded-full">
-                    {attention.mailFailed} mislukt
-                  </span>
-                )}
-                {attention.mailExpired > 0 && (
-                  <span className="inline-flex items-center gap-1 bg-amber-200/70 text-amber-900 text-xs font-semibold px-2 py-0.5 rounded-full">
-                    {attention.mailExpired} verlopen
-                  </span>
-                )}
-              </div>
-              <p className="mt-0.5 text-xs text-amber-700 leading-relaxed">
-                Er staan berichten klaar die nooit verstuurd zijn. Neem contact op met de beheerder.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
       {/* De generator slaat alleen feestdagen over die in `holidays` staan. Reikt het
           roostervenster voorbij de laatst bekende feestdag, dan plant hij daarna
           stilzwijgend op feestdagen door — vandaar deze waarschuwing. Datums bewust in
