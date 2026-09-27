@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, Info, Receipt, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Download, Info, Receipt, X } from 'lucide-react';
 import { Chain, InvoiceLine, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
 import {
-  amount, euro, getChainInvoiceLines, getChains, getInvoiceLines, hoursText, InvoiceTotals, sumLines,
+  amount, euro, exportInvoiceLinesToExcel, getChainInvoiceLines, getChains, getInvoiceLines, hoursText,
+  InvoiceTotals, sumLines,
 } from './invoiceService';
 import { TYPE_STYLES } from './constants';
 
@@ -228,6 +229,15 @@ export default function Invoicing({ onClose }: Props) {
             >
               Vorige maand
             </button>
+            {!loading && lines.length > 0 && (
+              <button
+                onClick={() => exportInvoiceLinesToExcel(lines, pharmacies, mode, period)}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 bg-green-700 text-white hover:bg-green-800"
+                title="Download de geladen regels als Excel, één tabblad per apotheek"
+              >
+                <Download size={14} /> Exporteren
+              </button>
+            )}
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}

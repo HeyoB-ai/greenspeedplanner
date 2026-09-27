@@ -1,5 +1,7 @@
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
-import { Chain, InvoiceLine, PharmacyRate } from '../types';
+import { Chain, InvoiceLine, Pharmacy, PharmacyRate } from '../types';
+import { TYPE_STYLES } from './constants';
 
 // ── Facturatie richting apotheken (fase 7, migratie 025) ──────────────────
 // Alle bedragen komen uit invoice_lines(); er staat hier geen tarief en geen
@@ -19,7 +21,7 @@ export async function getInvoiceLines(
     p_pharmacy_id: pharmacyId, p_from: fromISO, p_to: toISO,
   });
   if (error) throw error;
-  return (data ?? []) as InvoiceLine[];
+  return (data ?? []).map((r: any) => ({ ...r, pharmacy_id: pharmacyId })) as InvoiceLine[];
 }
 
 // De ketens met hun facturatie-instelling (migratie 032).
@@ -171,4 +173,72 @@ export function hoursText(minutes: number | null): string {
   const h = Math.floor(total / 60);
   const m = total % 60;
   return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+// ── Excel-export ──────────────────────────────────────────────────────────
+// Eén tabblad per apotheek, in dezelfde volgorde als de keuzelijst. Bedragen
+// en minuten gaan als getal de sheet in, zodat er in Excel mee te rekenen
+// valt; een onbekend bedrag blijft een lege cel, geen 0.
+
+function slug(name: string): string {
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'apotheek';
+}
+
+function num(value: number | null): number | null {
+  return value == null ? null : Number(value);
+}
+
+export function exportInvoiceLinesToExcel(
+  lines: InvoiceLine[],
+  pharmacies: Pharmacy[],
+  mode: 'pharmacy' | 'chain',
+  period: { from: string; to: string },
+): void {
+  const byPharmacy = new Map<string, InvoiceLine[]>();
+  for (const l of lines) {
+    const list = byPharmacy.get(l.pharmacy_id) ?? [];
+    list.push(l);
+    byPharmacy.set(l.pharmacy_id, list);
+  }
+  const order = pharmacies.filter((p) => byPharmacy.has(p.id));
+
+  const wb = XLSX.utils.book_new();
+  // Excel: maximaal 31 tekens, geen : \ / ? * [ ] en geen dubbele namen.
+  const used = new Set<string>();
+  for (const p of order) {
+    const base = p.name.replace(/[:\\/?*[\]]/g, '-').slice(0, 31);
+    let tab = base;
+    for (let n = 2; used.has(tab.toLowerCase()); n++) {
+      const suffix = ` (${n})`;
+      tab = base.slice(0, 31 - suffix.length) + suffix;
+    }
+    used.add(tab.toLowerCase());
+
+    const rows = byPharmacy.get(p.id)!.map((l) => [
+      l.shift_date,
+      l.courier_name ?? 'Open',
+      TYPE_STYLES[l.shift_type]?.label ?? l.shift_type,
+      num(l.planned_minutes),
+      num(l.billed_minutes),
+      num(l.share_pct),
+      num(l.hours_amount),
+      num(l.start_amount),
+      num(l.travel_amount),
+      num(l.expenses_amount),
+      num(l.urgent_amount),
+      // Zelfde getal als de laatste kolom op het scherm: het ketendeel in
+      // ketenmodus, anders het filiaaldeel (zonder splitsing het hele bedrag).
+      num(mode === 'chain' ? l.chain_amount : l.branch_amount),
+    ]);
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Datum', 'Koerier', 'Type', 'Gepland (min)', 'Werkelijk (min)', 'Aandeel %',
+        'Uren (€)', 'Start (€)', 'Reis (€)', 'Onkosten (€)', 'Spoed (€)', 'Totaal (€)'],
+      ...rows,
+    ]);
+    XLSX.utils.book_append_sheet(wb, sheet, tab);
+  }
+
+  const who = order.length === 1 ? slug(order[0].name) : 'meerdere';
+  XLSX.writeFile(wb, `factuur_${period.from.slice(0, 7)}_${who}.xlsx`);
 }

@@ -211,6 +211,10 @@ export interface ExtraWorkRow {
 // Eén regel uit invoice_lines(). Namen volgen de functie 1-op-1 (snake_case),
 // zodat er geen tweede woordenlijst te onderhouden valt.
 export interface InvoiceLine {
+  // Niet uit invoice_lines() zelf: die krijgt één apotheek mee en noemt haar
+  // dus niet. getInvoiceLines() zet hem erbij, zodat regels van meerdere
+  // apotheken (keten, meerkeuze) na het samenvoegen nog te herleiden zijn.
+  pharmacy_id: string;
   shift_id: string;
   shift_date: string;
   shift_type: ShiftType;
