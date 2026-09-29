@@ -68,6 +68,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `043_phone_single_source.sql` | `employee_save()` raakt `employees.phone` niet meer aan; `courier_contacts.phone_e164` is de enige bron voor de SMS-keten |
 | `050_benu_mail_bundling.sql` | de BENU-tijdinvoer als berichtsoort `benu_time_entry` in `mail_outbox`. **Grotendeels teruggedraaid door 051** — de twee mails werden één, maar de koerier hield twee formulieren |
 | `051_uitloop_verantwoorden.sql` | één formulier per dienst: de BENU-inschrijving eruit, `duration_minutes()` als gedeelde som, en de toelichting verplicht zodra de dienst meer dan de drempel uitloopt |
+| `052_meerwerk_sweep_drempel.sql` | de meerwerkdrempel van de lus naar de `WHERE`: `LIMIT` telt alleen nog rijen die ook een `extra_work`-rij opleveren, zodat diensten die op tijd klaar waren de sweep niet langzaam dichtslibben |
 
 > `044` t/m `049` (BENU selfbilling, weekpariteit van roosters, ziekteverzuim)
 > staan nog niet in deze tabel; de bestanden zelf zijn leidend.
