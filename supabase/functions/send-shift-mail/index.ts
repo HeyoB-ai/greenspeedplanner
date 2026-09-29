@@ -401,29 +401,36 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
       //
       // Bij BENU is de geplande tijd bovendien niet haar zaak: wat BENU
       // registreert en vergoedt is de PDA-tijd, wat onze planning ervan had
-      // gemaakt is een interne afspraak.
+      // gemaakt is een interne afspraak. Vandaar twee namen voor hetzelfde
+      // venster, en reference_kind (migratie 054) die zegt welke van de twee.
+      const bron = p.reference_kind === 'pda' ? 'de PDA' : 'de planning';
       const venster = p.reference_start && p.reference_end
-        ? `${p.reference_kind === 'pda' ? 'volgens de PDA' : 'gepland'} `
-          + `${p.reference_start}-${p.reference_end}`
+        ? `volgens ${bron} van ${p.reference_start} tot ${p.reference_end}`
         : null;
 
-      // Geen venster: een melding van vóór migratie 054 die nog in de wachtrij
-      // stond. Dan liever geen venster dan het oude, mogelijk verkeerde — het
-      // aantal minuten klopt wel.
-      const lines: Line[] = venster
-        ? [`De dienst van ${when}: ${venster}`
-           + `${p.actual_end ? `, werkelijk tot ${p.actual_end}` : ''}`
-           + `, ${minutes} minuten extra.`]
-        : [`Op de dienst van ${when} is ${minutes} minuten extra gewerkt.`];
-      if (p.note) lines.push(`Toelichting: ${p.note}`);
-      lines.push('Ga je akkoord met het doorbelasten van die extra tijd?');
+      // Geen venster: een melding waarvan de backfill van 054 het niet kon
+      // herleiden, omdat de dienst na het aanmaken is verschoven. Dan noemt de
+      // zin geen tijden en ook geen maatstaf — "langer dan gepland" zou hier
+      // een gok zijn, en het vermijden van zulke gokken is de hele reden dat
+      // het venster wordt meegekopieerd. Het aantal minuten klopt wél, en dat
+      // is waar de vraag over gaat.
+      const lines: Line[] = [
+        venster
+          ? `De dienst van ${when} duurde ${venster}`
+            + `${p.actual_end ? `, maar in werkelijkheid tot ${p.actual_end}` : ''}`
+            + `, ${minutes} minuten extra.`
+          : `Op de dienst van ${when} is ${minutes} minuten extra gewerkt.`,
+      ];
+      if (p.note) lines.push('', `De toelichting van de koerier is: ${p.note}`);
+      lines.push('', 'Ga je akkoord met het doorbelasten van die extra tijd?');
       if (p.own_invoice) {
         // Zonder deze zin denkt de lezer aan de factuur die hij van zijn keten
         // kent, en dat is precies de factuur waar dit NIET op komt.
-        lines.push('Deze tijd komt op de factuur van dit filiaal, niet op die van de keten.');
+        lines.push('', 'Deze tijd komt op de factuur van dit filiaal, niet op die van de keten.');
       }
-      lines.push({ link: row.link, label: 'Reageren op de extra tijd' });
-      lines.push(`Zonder reactie binnen ${p.respond_hours ?? 48} uur belasten we de extra tijd door.`);
+      lines.push('', { link: row.link, label: 'Reageren op de extra tijd' });
+      lines.push('', `Als wij binnen ${p.respond_hours ?? 48} uur geen reactie hebben ontvangen `
+                   + 'belasten we de extra tijd door.');
       return lines;
     }
     default:
@@ -548,8 +555,17 @@ function telHref(phone: string): string {
 // esc(): dat zou de anchor tot letterlijke tekst maken.
 function closingFor(audience: 'courier' | 'pharmacy'): { text: string; html: string } {
   if (audience === 'pharmacy') {
-    const s = 'Vragen? Bel of mail de planning.';
-    return { text: s, html: esc(s) };
+    // Een briefafsluiting en geen uitnodiging om te bellen. Een apotheek krijgt
+    // hier één vraag voorgelegd waar een knop onder staat; "bel de planning"
+    // zet een tweede weg open naast die knop, en dan komt het antwoord binnen
+    // op een plek waar de meerwerkketen het niet ziet staan.
+    //
+    // De koeriersafsluiting blijft het telefoonnummer houden: die gaat over
+    // verhinderd zijn, en dat is juist wél een telefoontje.
+    return {
+      text: 'Met vriendelijke groet,\nTeam Greenspeed',
+      html: `${esc('Met vriendelijke groet,')}<br />${esc('Team Greenspeed')}`,
+    };
   }
   if (!PLANNING_PHONE) {
     const s = 'Vragen of verhinderd? Bel de planning.';
@@ -596,6 +612,12 @@ function buttonHtml(l: { link: string; label: string }, withFallback: boolean): 
 // <br /> gescheiden; een volgend blok begint een nieuwe alinea — dezelfde
 // indeling als de tekstversie, die blokken met een lege regel scheidt.
 //
+// Een LEGE regel breekt de alinea open zonder dat er een nieuw blok voor nodig
+// is. Een blok is één bericht uit de outbox en dat blijft zo, maar niet elk
+// bericht is één alinea: de meerwerkvraag aan een apotheek is een briefje van
+// vier zinnen en leest niet als een opsomming achter elkaar. In de tekstversie
+// levert diezelfde lege regel vanzelf een witregel op — één bron, twee vormen.
+//
 // Een opsommingsregel houdt zijn streepje als bullet in plaats van een <ul> te
 // worden: op lijsten zet de Word-renderer eigen marges die met inline CSS niet te
 // overrulen zijn, en dan staat de halve mail scheef.
@@ -610,7 +632,9 @@ function blockHtml(block: Line[], withFallback: boolean): string {
   };
 
   for (const l of block) {
-    if (typeof l === 'string') {
+    if (l === '') {
+      flush();
+    } else if (typeof l === 'string') {
       para.push(l.startsWith('- ') ? `&#8226;&nbsp;${esc(l.slice(2))}` : esc(l));
     } else {
       // De knop staat op eigen hoogte, dus de alinea ervoor gaat eerst dicht.
@@ -705,9 +729,16 @@ function renderMail(
 
   const blocks = rendered.map((x) => x.lines);
   const subject = subjectFor(rows);
+  // "Stand op <datum>:" is een kop boven een lijst met diensten — dat is wat een
+  // koerier hieronder krijgt. Een apotheek krijgt geen lijst maar een briefje
+  // met één vraag, en dan is een kop met een dubbele punt de verkeerde vorm:
+  // daar hoort een zin. De datum doet in beide gevallen hetzelfde werk, namelijk
+  // vastleggen waarop dit bericht slaat als het een week later wordt gelezen.
   const stand = rendered.every((x) => AFGELOPEN_DIENST.has(x.kind))
     ? null
-    : `Stand op ${todayNL()}:`;
+    : audience === 'pharmacy'
+      ? `Het is vandaag ${todayNL()}.`
+      : `Stand op ${todayNL()}:`;
   // Een apotheek is geen koerier: andere aanhef, en de afsluiting gaat niet
   // over verhinderd zijn maar over de vraag die er ligt.
   // Bij een apotheek blijft de hele naam staan: dat is geen persoon maar een zaak.

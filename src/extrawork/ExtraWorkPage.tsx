@@ -128,9 +128,13 @@ export default function ExtraWorkPage({ token }: { token: string }) {
   // Ontbreekt het venster, dan is dit een melding van vóór migratie 054 die niet
   // meer te herleiden was. Dan blijft de regel weg: een venster dat niet bij de
   // minuten past is erger dan geen venster.
+  //
+  // Woordelijk dezelfde vorm als in de meerwerkmail. Een apotheek leest die mail
+  // en klikt door naar dit scherm; staat hetzelfde er hier anders, dan gaat ze
+  // twijfelen of het wel over hetzelfde verzoek gaat.
   const venster = view.reference_start && view.reference_end
-    ? `${view.reference_kind === 'pda' ? 'volgens de PDA' : 'gepland'} `
-      + `${view.reference_start}–${view.reference_end}`
+    ? `volgens ${view.reference_kind === 'pda' ? 'de PDA' : 'de planning'} `
+      + `van ${view.reference_start} tot ${view.reference_end}`
     : null;
 
   return (
@@ -154,7 +158,7 @@ export default function ExtraWorkPage({ token }: { token: string }) {
         {view.actual_end && (
           <div className="flex items-start gap-2">
             <span className="w-[15px]" />
-            <dd className="text-slate-500">werkelijk tot {view.actual_end}</dd>
+            <dd className="text-slate-500">in werkelijkheid tot {view.actual_end}</dd>
           </div>
         )}
         <div className="flex items-start gap-2">
@@ -167,7 +171,7 @@ export default function ExtraWorkPage({ token }: { token: string }) {
 
       {view.note && (
         <div className="mt-3 rounded-lg border border-slate-200 p-3 text-sm">
-          <p className="text-xs text-slate-500">Toelichting</p>
+          <p className="text-xs text-slate-500">Toelichting van de koerier</p>
           <p className="mt-0.5 text-slate-700">{view.note}</p>
         </div>
       )}
@@ -240,8 +244,8 @@ export default function ExtraWorkPage({ token }: { token: string }) {
 
           {view.respond_by && (
             <p className="text-xs text-slate-400 mt-3">
-              Zonder reactie belasten we de extra tijd door. Je hebt nog tot{' '}
-              {formatDate(view.respond_by.slice(0, 10))}.
+              Als wij geen reactie hebben ontvangen belasten we de extra tijd door. Je hebt
+              nog tot {formatDate(view.respond_by.slice(0, 10))}.
             </p>
           )}
         </>
