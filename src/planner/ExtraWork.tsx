@@ -155,8 +155,16 @@ export default function ExtraWork({ onClose }: Props) {
                       {EXTRA_WORK_LABELS[r.status]}
                     </span>
                     <span className="ml-auto text-sm tabular-nums">
+                      {/* "gepland" of "volgens de PDA": planned_minutes is sinds
+                          migratie 053 de referentie en bij een BENU-dienst is
+                          dat de PDA-tijd. Hetzelfde woord voor allebei laat een
+                          planner een getal narekenen tegen de verkeerde tijd —
+                          en dan belt hij de apotheek met een verhaal dat niet
+                          klopt. */}
                       <span className="text-slate-500">
-                        {minutesText(r.planned_minutes)} gepland, {minutesText(r.actual_minutes)} werkelijk ·{' '}
+                        {minutesText(r.planned_minutes)}{' '}
+                        {r.reference_kind === 'pda' ? 'volgens de PDA' : 'gepland'},{' '}
+                        {minutesText(r.actual_minutes)} werkelijk ·{' '}
                       </span>
                       <strong className="text-amber-700">{minutesText(r.share_minutes)} extra</strong>
                       {r.share_pct < 100 && (

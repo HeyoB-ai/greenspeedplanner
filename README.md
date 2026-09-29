@@ -70,6 +70,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `051_uitloop_verantwoorden.sql` | één formulier per dienst: de BENU-inschrijving eruit, `duration_minutes()` als gedeelde som, en de toelichting verplicht zodra de dienst meer dan de drempel uitloopt |
 | `052_meerwerk_sweep_drempel.sql` | de meerwerkdrempel van de lus naar de `WHERE`: `LIMIT` telt alleen nog rijen die ook een `extra_work`-rij opleveren, zodat diensten die op tijd klaar waren de sweep niet langzaam dichtslibben |
 | `053_pda_tijd.sql` | de PDA-tijd als derde tijd op `shift_declarations`, met `reference_minutes()` als gedeelde maatstaf: bij BENU loopt de uitloop tegen de PDA-tijd en niet tegen de begroting |
+| `054_meerwerk_referentievenster.sql` | het referentievenster als kopie in `extra_work`, en mee in de mail, de apotheekpagina en het plannerscherm: de apotheek ziet waartegen gemeten is en kan de minuten narekenen |
 
 > `044` t/m `049` (BENU selfbilling, weekpariteit van roosters, ziekteverzuim)
 > staan nog niet in deze tabel; de bestanden zelf zijn leidend.
@@ -1338,6 +1339,53 @@ hij uitbetaald op de klok van de apotheek. Twee betekenissen in één veld.
 > **`invoice_lines()` is niet aangeraakt.** Of BENU op de PDA-tijd gefactureerd
 > moet worden verandert de bedragen, en dat is een aparte beslissing. Tot die
 > genomen is dient de PDA-tijd alleen als maatstaf voor de uitloop.
+
+### Wat migratie 054 erachteraan moest
+
+053 verlegde de maatstaf, maar twee teksten bleven op de geplande tijd staan.
+Een BENU-apotheek las daardoor getallen uit twee werelden:
+
+```
+gepland 09:00-09:30 … 23 minuten langer dan gepland
+```
+
+09:30 plus 23 is 09:53, terwijl de koerier tot 10:08 werkte — de minuten kwamen
+van de PDA-tijd (09:00-09:45), het venster uit de planning. Een verzoek dat de
+ontvanger niet kan **narekenen** kan ze alleen op goed vertrouwen goedkeuren, en
+juist dáárom zette 053 `planned_minutes` op de referentie.
+
+1. **Het venster verhuist mee naar de apotheek.** `extra_work.reference_kind`
+   (`pda` of `planned`), `reference_start`, `reference_end` en `actual_end` — als
+   **kopie** bij het aanmaken, net als `courier_note`. Corrigeert de koerier zijn
+   declaratie later, of verschuift de planner de dienst, dan verandert niet met
+   terugwerkende kracht wat er aan de klant is voorgelegd.
+2. **De geplande tijd gaat eruit, niet ernaast.** `planned_start` en
+   `planned_end` verdwijnen uit de payload van `extra_work_release()`. Bij een
+   selfbilling-filiaal is wat ónze planning ervan had gemaakt een interne
+   afspraak; wat BENU registreert en vergoedt is de PDA-tijd.
+3. **De keuze staat nog maar op één plek.** `reference_window()` bepaalt welk
+   venster geldt; `reference_minutes()` is herschreven tot *de lengte van dat
+   venster*. Het venster en de minuten kunnen daarmee niet meer uit elkaar lopen.
+   Het gedrag van `reference_minutes()` verandert niet — de verificatie in 054
+   draait dezelfde vier gevallen als 053.
+4. **Ook het plannerscherm.** *Financieel → Meerwerk* zette `45 min gepland`
+   boven een melding die tegen de PDA-tijd gemeten was. Dat scherm noemt nu
+   *volgens de PDA* waar dat aan de orde is; anders belt een planner een apotheek
+   met een verhaal dat niet klopt.
+
+De apotheek leest sindsdien:
+
+```
+zondag 27-09-2026 · volgens de PDA 09:00–09:45
+werkelijk tot 10:08
+23 minuten extra
+```
+
+> **Meldingen van vóór 054** worden bijgevuld door te herleiden: `planned_minutes`
+> staat er al, en die is ooit tegen één van twee vensters gerekend. Past hij op
+> geen van beide — de dienst is na het aanmaken verschoven — dan blijft het
+> venster leeg en tonen de mail en de pagina alleen het aantal minuten. Liever
+> geen venster dan een venster dat niet optelt.
 
 ### Wat blijft staan
 

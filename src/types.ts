@@ -196,6 +196,11 @@ export interface ExtraWorkRow {
   planned_minutes: number;
   actual_minutes: number;
   extra_minutes: number;
+  // Waartegen planned_minutes gemeten is (migratie 054): 'pda' bij een BENU
+  // selfbilling-filiaal, anders 'planned'. Zonder dit zou het scherm "gepland"
+  // zetten boven een getal dat van de PDA-tijd komt. NULL bij oude meldingen
+  // die niet meer te herleiden waren.
+  reference_kind: 'pda' | 'planned' | null;
   share_pct: number;
   share_minutes: number;
   courier_note: string | null;

@@ -114,8 +114,14 @@ interface OutboxRow {
     // alleen bij een meerwerkmelding (extra_work_request)
     extra_work_id?: string;
     pharmacy_name?: string;
-    planned_start?: string;
-    planned_end?: string;
+    // Het venster waartegen de uitloop gemeten is (migratie 054), met de soort
+    // erbij: 'pda' bij een BENU selfbilling-filiaal, anders 'planned'. Dit ZIJN
+    // niet de geplande tijden van de dienst — die stonden hier tot 054 en gaven
+    // een apotheek getallen die niet optelden.
+    reference_kind?: 'pda' | 'planned';
+    reference_start?: string;
+    reference_end?: string;
+    actual_end?: string;
     extra_minutes?: number;
     respond_hours?: number;
     // true bij een keten met de factuursplitsing aan: dan komt déze tijd op
@@ -386,12 +392,29 @@ function renderBlock(row: OutboxRow, expectedHours: number | null): Line[] {
       // wachten in plaats van half uit te gaan.
       if (!row.link || !p.shift_date) return [];
       const when = `${dayName(p.weekday ?? 1)} ${fmtDate(p.shift_date)}`;
-      const planned = p.planned_start && p.planned_end
-        ? ` (gepland ${p.planned_start}-${p.planned_end})` : '';
       const minutes = Math.round(Number(p.extra_minutes ?? 0));
-      const lines: Line[] = [
-        `De dienst van ${when}${planned} duurde ${minutes} minuten langer dan gepland.`,
-      ];
+
+      // Het venster met de naam die erbij hoort. Een apotheek moet dit kunnen
+      // NAREKENEN: staat er "gepland 09:00-09:30" boven "23 minuten extra"
+      // terwijl er tegen de PDA-tijd gemeten is, dan telt het niet op en kan ze
+      // het verzoek alleen op goed vertrouwen goedkeuren.
+      //
+      // Bij BENU is de geplande tijd bovendien niet haar zaak: wat BENU
+      // registreert en vergoedt is de PDA-tijd, wat onze planning ervan had
+      // gemaakt is een interne afspraak.
+      const venster = p.reference_start && p.reference_end
+        ? `${p.reference_kind === 'pda' ? 'volgens de PDA' : 'gepland'} `
+          + `${p.reference_start}-${p.reference_end}`
+        : null;
+
+      // Geen venster: een melding van vóór migratie 054 die nog in de wachtrij
+      // stond. Dan liever geen venster dan het oude, mogelijk verkeerde — het
+      // aantal minuten klopt wel.
+      const lines: Line[] = venster
+        ? [`De dienst van ${when}: ${venster}`
+           + `${p.actual_end ? `, werkelijk tot ${p.actual_end}` : ''}`
+           + `, ${minutes} minuten extra.`]
+        : [`Op de dienst van ${when} is ${minutes} minuten extra gewerkt.`];
       if (p.note) lines.push(`Toelichting: ${p.note}`);
       lines.push('Ga je akkoord met het doorbelasten van die extra tijd?');
       if (p.own_invoice) {

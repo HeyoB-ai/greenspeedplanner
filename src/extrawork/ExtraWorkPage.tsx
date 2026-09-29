@@ -18,8 +18,14 @@ interface ExtraWorkView {
   status: 'new' | 'released' | 'approved' | 'disputed' | 'expired';
   pharmacy_name: string;
   shift_date: string;
-  planned_start: string | null;
-  planned_end: string | null;
+  // Het venster waartegen de uitloop gemeten is (migratie 054). Bij een BENU
+  // selfbilling-filiaal is dat de PDA-tijd en niet de begroting; de soort komt
+  // mee zodat deze pagina hem bij de juiste naam noemt. Tot 054 stonden hier de
+  // geplande tijden van de dienst, en die telden niet op met de minuten.
+  reference_kind: 'pda' | 'planned' | null;
+  reference_start: string | null;
+  reference_end: string | null;
+  actual_end: string | null;
   extra_minutes: number;
   note: string | null;
   respond_by: string | null;
@@ -119,25 +125,42 @@ export default function ExtraWorkPage({ token }: { token: string }) {
   const answered = view.status === 'approved' || view.status === 'disputed';
   const expired = view.status === 'expired';
 
+  // Ontbreekt het venster, dan is dit een melding van vóór migratie 054 die niet
+  // meer te herleiden was. Dan blijft de regel weg: een venster dat niet bij de
+  // minuten past is erger dan geen venster.
+  const venster = view.reference_start && view.reference_end
+    ? `${view.reference_kind === 'pda' ? 'volgens de PDA' : 'gepland'} `
+      + `${view.reference_start}–${view.reference_end}`
+    : null;
+
   return (
     <Shell>
       <h1 className="font-semibold text-slate-800">Extra tijd op een dienst</h1>
       <p className="text-sm text-slate-600 mt-1">{view.pharmacy_name}</p>
 
+      {/* De drie getallen onder elkaar, zodat de apotheek ze kan narekenen: het
+          venster waartegen gemeten is, tot hoe laat er werkelijk gewerkt is, en
+          het verschil. Stond hier de GEPLANDE tijd boven een uitloop die tegen
+          de PDA-tijd gemeten was, dan telde het niet op — en dan valt er niets
+          te beoordelen, alleen te vertrouwen. */}
       <dl className="mt-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm space-y-1.5">
         <div className="flex items-start gap-2">
           <Clock size={15} className="mt-0.5 shrink-0 text-slate-400" />
           <dd>
             {formatDate(view.shift_date)}
-            {view.planned_start && view.planned_end && (
-              <span className="text-slate-500"> · gepland {view.planned_start}–{view.planned_end}</span>
-            )}
+            {venster && <span className="text-slate-500"> · {venster}</span>}
           </dd>
         </div>
+        {view.actual_end && (
+          <div className="flex items-start gap-2">
+            <span className="w-[15px]" />
+            <dd className="text-slate-500">werkelijk tot {view.actual_end}</dd>
+          </div>
+        )}
         <div className="flex items-start gap-2">
           <span className="w-[15px]" />
           <dd className="font-medium text-amber-700">
-            {minutesText(view.extra_minutes)} langer dan gepland
+            {minutesText(view.extra_minutes)} extra
           </dd>
         </div>
       </dl>
