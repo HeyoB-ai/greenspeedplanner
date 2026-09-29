@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Clock, Info, MapPin, Plus, Trash2 } from 'lucide-react';
 import {
   DeclarationClosedError, DeclarationView, LinkInvalidError, durationText, formatDate,
-  joinNames, loadDeclaration, submitDeclaration,
+  joinNames, loadDeclaration, overrunMinutes, submitDeclaration,
 } from './declarationApi';
 
 interface Props {
@@ -95,6 +95,17 @@ export default function DeclarationPage({ token }: Props) {
       return;
     }
 
+    // Uitloop boven de drempel vraagt om een onderbouwing (migratie 051). De
+    // database weigert het ook — dat is de echte bewaker, want dit scherm is
+    // niet de enige weg naar declaration_submit(). Hier staat de melding alleen
+    // meteen, zonder dat er eerst een ronde naar de server hoeft.
+    const drempel = view.explain_over_minutes;
+    const uitloop = overrunMinutes(view.start_time, view.budgeted_end_time, start, end);
+    if (drempel !== null && uitloop !== null && uitloop >= drempel && note.trim() === '') {
+      setError(`Je was ${uitloop} minuten langer bezig dan gepland. Vertel kort waardoor dat kwam.`);
+      return;
+    }
+
     setBusy(true);
     try {
       const updated = await submitDeclaration(token, {
@@ -179,6 +190,20 @@ export default function DeclarationPage({ token }: Props) {
   const duration = durationText(start, end);
   const wantsKm = !view.is_contractor && claims === true && view.own_car;
 
+  // Uitloop boven de drempel (migratie 051): dan is de toelichting geen ruimte
+  // voor opmerkingen meer maar een verplichte onderbouwing. De drempel komt van
+  // de server, zodat het scherm nooit om iets vraagt dat nergens heen gaat.
+  //
+  // Dit rekent mee terwijl er getypt wordt, en dat is met opzet: een koerier die
+  // pas bij het indienen hoort dat er nog een veld bij komt, moet terugscrollen
+  // en is al half weg. Nu verschijnt de vraag op het moment dat hij zijn
+  // eindtijd invult — en ziet hij meteen of hij zich in de tijd vergist heeft.
+  const overrun = overrunMinutes(view.start_time, view.budgeted_end_time, start, end);
+  const mustExplain = view.explain_over_minutes !== null
+                   && overrun !== null
+                   && overrun >= view.explain_over_minutes;
+  const explainMissing = mustExplain && note.trim() === '';
+
   return (
     <Shell>
       <h1 className="font-semibold text-slate-800">Hoi {view.courier_name.split(' ')[0]},</h1>
@@ -213,6 +238,17 @@ export default function DeclarationPage({ token }: Props) {
       {/* ── Vraag 1: de werkelijke duur ─────────────────────────────────── */}
       <section className="mt-5">
         <h2 className="text-sm font-semibold text-slate-800">Hoe lang duurde de dienst werkelijk?</h2>
+        {/* BENU selfbilling: de tijden komen van hún PDA en niet van de klok van
+            de koerier. BENU factureert zichzelf op die registratie, dus een
+            eigen schatting levert een verschil op dat later niemand meer kan
+            uitleggen. Dit is het enige wat zo'n dienst anders maakt — vandaar
+            een zin en geen tweede formulier. */}
+        {view.is_benu_selfbilling && (
+          <p className="mt-1 rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-600">
+            Neem de begintijd en de eindtijd over van de <strong>PDA van BENU</strong>, niet van je
+            eigen klok. Die tijd wordt vergoed.
+          </p>
+        )}
         <div className="mt-2 flex items-center gap-3">
           <label className="flex-1">
             <span className="block text-xs text-slate-500 mb-1">Begonnen om</span>
@@ -362,14 +398,33 @@ export default function DeclarationPage({ token }: Props) {
       </section>
 
       {/* ── Ruimte voor het geval dat niet in een veld past ──────────────── */}
+      {/* Hetzelfde veld in twee gedaantes. Boven de drempel is het geen
+          opmerkingenveld meer maar de onderbouwing die aan de apotheek wordt
+          voorgelegd, en dan hoort het scherm dat ook te zeggen — inclusief waar
+          die tekst heen gaat. Eén veld en niet twee: de koerier heeft één
+          verhaal over zijn dienst, en twee tekstvakken laten hem raden welke van
+          de twee de planning leest. */}
       <section className="mt-5">
         <label className="block">
-          <span className="block text-sm text-slate-700">Iets bijzonders? (mag leeg blijven)</span>
+          <span className="block text-sm text-slate-700">
+            {mustExplain
+              ? `Je was ${overrun} minuten langer bezig dan gepland. Waardoor kwam dat?`
+              : 'Iets bijzonders? (mag leeg blijven)'}
+          </span>
+          {mustExplain && (
+            <span className="block text-xs text-slate-500 mt-0.5">
+              Deze uitloop belasten we door aan de apotheek, en dit is wat zij te lezen krijgt.
+              Zonder toelichting kunnen we het niet indienen.
+            </span>
+          )}
           <textarea
-            value={note} rows={2} disabled={busy}
+            value={note} rows={mustExplain ? 3 : 2} disabled={busy}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Bijvoorbeeld: langer doorgewerkt, of onderweg opgehouden."
-            className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-60"
+            placeholder={mustExplain
+              ? 'Bijvoorbeeld: twee extra ritten, of moeten wachten op een spoedlevering.'
+              : 'Bijvoorbeeld: langer doorgewerkt, of onderweg opgehouden.'}
+            className={`mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-60 ${
+              explainMissing ? 'border-amber-400' : 'border-slate-300'}`}
           />
         </label>
       </section>

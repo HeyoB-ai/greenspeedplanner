@@ -66,6 +66,11 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `041_reminder_invited_on_sent_at.sql` | `invited_on` in de herinnering komt uit `mail_outbox.sent_at` en niet uit `created_at`; is de uitnodiging nooit bezorgd, dan beweert de tekst geen datum |
 | `042_attention_stuck_mail.sql` | `mail_failed` en `mail_expired` als twee losse kolommen in `planner_attention()`; ook buiten `total` |
 | `043_phone_single_source.sql` | `employee_save()` raakt `employees.phone` niet meer aan; `courier_contacts.phone_e164` is de enige bron voor de SMS-keten |
+| `050_benu_mail_bundling.sql` | de BENU-tijdinvoer als berichtsoort `benu_time_entry` in `mail_outbox`. **Grotendeels teruggedraaid door 051** — de twee mails werden één, maar de koerier hield twee formulieren |
+| `051_uitloop_verantwoorden.sql` | één formulier per dienst: de BENU-inschrijving eruit, `duration_minutes()` als gedeelde som, en de toelichting verplicht zodra de dienst meer dan de drempel uitloopt |
+
+> `044` t/m `049` (BENU selfbilling, weekpariteit van roosters, ziekteverzuim)
+> staan nog niet in deze tabel; de bestanden zelf zijn leidend.
 
 Migratie 010 is één transactie (`BEGIN … COMMIT`): faalt er iets, dan wordt er
 niets toegepast.
@@ -1222,6 +1227,120 @@ die laatste zegt alleen of het `http_post`-statement zelf lukte.
 > een bericht — en na het inkorten van de termijn in 036 kunnen dat er in één keer
 > een aantal zijn.
 ---
+
+## BENU selfbilling: één route, één formulier
+
+Bij BENU-filialen die selfbilling doen staat de gewerkte tijd op de **PDA van de
+apotheek**. BENU factureert zichzelf op die registratie, en dat is de tijd die
+vergoed wordt.
+
+### Wat er mis was: twee ketens voor dezelfde vraag
+
+Migratie 046 bouwde voor BENU een eigen keten — een eigen koeriersformulier, een
+eigen drempel, een eigen goedkeuringslus met de apotheek. Een koerier met een
+BENU-dienst kreeg daardoor twee mails en moest **twee formulieren** invullen over
+één route.
+
+Precies dat stond al in de meerwerk-keten van migratie 031:
+
+| Wat er nodig is | Waar het al zat |
+|---|---|
+| drempel "meer dan een kwartier" | `invoice_settings.extra_work_threshold_minutes`, standaard **15** |
+| voor alle koeriers, alle diensten | `extra_work_sweep()` loopt over **elke** declaratie |
+| onderbouwing van de uitloop | `shift_declarations.courier_note` gaat mee naar de apotheek |
+| de apotheek moet akkoord | `extra_work_respond_hours`, 48 uur, per filiaal |
+
+Die keten rekent met `actual_end - actual_start` uit het declaratieformulier
+tegen de begrote tijd. Eén route, één begin- en eindtijd. Wat BENU écht anders
+maakt is niet de keten maar de **herkomst** van de tijden — en dat is een zin op
+het bestaande formulier, geen tweede formulier.
+
+Migratie 050 heeft dat niet opgelost: die voegde de twee *mails* samen en liet de
+twee *formulieren* staan. 051 draait die inschrijving terug.
+
+### Wat migratie 051 doet
+
+1. **De BENU-inschrijving eruit.** `declaration_sweep()` gaat terug naar de vorm
+   van 049 en `benu_enqueue_shift()`, `benu_enqueue_due()`, `benu_link_for()`,
+   `benu_expire_stale()`, `benu_token_expires()` en `benu_shifts_to_mail()`
+   verdwijnen. Wachtende `benu_time_entry`-post wordt afgesloten met de reden
+   erbij — vóór het droppen, anders blijft er post in de wachtrij staan die
+   niemand meer oppakt.
+2. **Eén definitie van "hoe lang duurde dit".** `duration_minutes(start, end)`,
+   gedeeld door `extra_work_sweep()` en `declaration_submit()`. Zouden die twee
+   verschillend rekenen, dan wordt een koerier om een toelichting gevraagd die
+   nergens heen gaat, of gaat er een verzoek naar de apotheek zonder
+   onderbouwing.
+3. **De toelichting is verplicht boven de drempel.** In `declaration_submit()`,
+   met exact de voorwaarden van `extra_work_sweep()`: geen begrote eindtijd of
+   `shift_type = 'urgent'` betekent geen uitloop en dus geen vraag. Tot nu toe
+   was het veld altijd optioneel, dus kon een apotheek een verzoek om extra tijd
+   krijgen met een leeg toelichtingsveld.
+4. **Het formulier weet waar het over gaat.** `declaration_by_token()` geeft
+   `is_benu_selfbilling` en `explain_over_minutes` mee. Het eerste zet de zin
+   over de PDA op het scherm; het tweede is dezelfde drempel als hierboven, zodat
+   het scherm en de database niet uit elkaar kunnen lopen wanneer die ooit wordt
+   bijgesteld.
+
+> **Geen 45xxx voor de ontbrekende toelichting.** Die klasse betekent in
+> `shift-declaration` "geldig token maar afgesloten", en dan klapt het formulier
+> dicht. Dit is juist een invoerfout die de koerier zelf kan herstellen: met de
+> gewone `P0001` komt de melding onder de knop en blijft alles ingevuld staan.
+
+### Wat blijft staan
+
+`benu_shift_entries` en `benu_pharmacy_entries` blijven, met hun pagina's
+(`/benu`, `/benu-ph`) en hun RPC's. Er staan lopende zaken in: formulieren die
+een koerier nog kan invullen en extra tijd waar een apotheek nog op mag reageren.
+Die moeten hun ronde kunnen afmaken. Er komen alleen geen nieuwe meer bij.
+
+Zijn die lopende zaken klaar, dan kan de rest van 046 weg — dat is een opruiming
+en geen haast.
+
+### Uitrollen
+
+Migratie 051 draaien in de SQL Editor (eerst met `ROLLBACK;` op de laatste regel
+om te proefdraaien). Daarna:
+
+```powershell
+npx supabase functions delete send-benu-daily-mail
+npx supabase functions deploy send-shift-mail
+npm run build   # de invulpagina zelf
+```
+
+`shift-declaration` hoeft NIET opnieuw uitgerold te worden. Die functie geeft
+terug wat `declaration_by_token()` oplevert, zonder de velden te benoemen —
+de twee nieuwe kolommen komen er dus vanzelf doorheen. `send-shift-mail` wél: de
+uitgerolde versie van 050 zoekt nog naar `benu_expire_stale()`, en die bestaat
+niet meer.
+
+En de cron van de BENU-dagmail opzeggen, anders blijft er elke avond een
+verdwenen functie aangeroepen worden. De job heette `send-benu-daily-mail` en
+stond op `0 20 * * *` — 22:00 Nederlandse tijd:
+
+```sql
+SELECT cron.unschedule(7);   -- op jobid; een naam kun je overtypen, een id niet
+SELECT jobid, jobname, schedule, active FROM cron.job ORDER BY jobid;
+```
+
+> **Selecteer `cron.job.command` niet.** Daar staan de service-role-sleutel en
+> `CRON_SECRET` voluit in, bij elke `net.http_post`-job. Wie de jobs wil bekijken
+> neemt `jobid, jobname, schedule, active`, of
+> `substring(command from 'functions/v1/[a-z-]+')` als hij wil zien welke functie
+> een job aanroept.
+
+> `BENU_COURIER_URL` is niet meer nodig voor de mail. Laat hem staan zolang de
+> lopende BENU-formulieren nog openstaan: `benu-courier-form` gebruikt hem om de
+> apotheekmail een knop te geven.
+
+Controleren of het klopt: laat een koerier met een BENU-dienst een uitloop van
+meer dan een kwartier invullen. Het toelichtingsveld hoort dan van *"Iets
+bijzonders? (mag leeg blijven)"* te veranderen in *"Je was N minuten langer bezig
+dan gepland. Waardoor kwam dat?"*, en indienen zonder tekst hoort geweigerd te
+worden — zowel door het scherm als door de database.
+
+---
+
 
 ## Drift: wat er in de database staat maar niet in de migraties stond
 

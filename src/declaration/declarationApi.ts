@@ -45,6 +45,16 @@ export interface DeclarationView {
   // koerier in het onkostenblok, want een vergoeding waar geen recht op bestaat
   // zou naast die post nog eens worden doorbelast.
   is_contractor: boolean;
+  // Staat er een BENU selfbilling-filiaal op deze dienst (migratie 051)? Dan
+  // komen de tijden van de PDA van de apotheek en niet van de klok van de
+  // koerier. Zonder die aanwijzing vult de helft zijn eigen tijden in en klopt
+  // de facturatie niet — BENU factureert zichzelf op hun eigen registratie.
+  is_benu_selfbilling: boolean;
+  // Vanaf hoeveel minuten uitloop er een toelichting nodig is. Komt uit
+  // invoice_settings, dezelfde drempel die extra_work_sweep() aanhoudt, zodat
+  // het scherm nooit om iets vraagt dat nergens heen gaat. NULL = niet van
+  // toepassing: een spoeddienst of een dienst zonder begrote eindtijd.
+  explain_over_minutes: number | null;
 }
 
 export interface SubmitInput {
@@ -152,14 +162,37 @@ export function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} en ${names[names.length - 1]}`;
 }
 
-// Duur tussen twee 'HH:MM'-tijden, over middernacht heen. Alleen om de koerier
-// te laten zien wat hij invult; de database rekent zelf opnieuw.
-export function durationText(start: string, end: string): string | null {
+// Duur tussen twee 'HH:MM'-tijden in minuten, over middernacht heen. De
+// tegenhanger van duration_minutes() in de database (migratie 051), met dezelfde
+// behandeling van een eindtijd op of vóór de begintijd. Die twee horen hetzelfde
+// te rekenen: het scherm bepaalt hiermee of het om een toelichting vraagt, en de
+// database of hij die eist.
+export function minutesBetween(start: string, end: string): number | null {
   if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return null;
   const [sh, sm] = start.split(':').map(Number);
   const [eh, em] = end.split(':').map(Number);
-  let minutes = eh * 60 + em - (sh * 60 + sm);
-  if (minutes <= 0) minutes += 24 * 60;
+  const minutes = eh * 60 + em - (sh * 60 + sm);
+  return minutes <= 0 ? minutes + 24 * 60 : minutes;
+}
+
+// Hoeveel langer de dienst duurde dan begroot. NULL zodra er iets ontbreekt —
+// een dienst zonder begrote eindtijd heeft geen uitloop, alleen een duur.
+export function overrunMinutes(
+  plannedStart: string, plannedEnd: string | null,
+  actualStart: string, actualEnd: string,
+): number | null {
+  if (!plannedEnd) return null;
+  const begroot = minutesBetween(plannedStart, plannedEnd);
+  const echt    = minutesBetween(actualStart, actualEnd);
+  if (begroot === null || echt === null) return null;
+  return echt - begroot;
+}
+
+// Duur tussen twee 'HH:MM'-tijden, over middernacht heen. Alleen om de koerier
+// te laten zien wat hij invult; de database rekent zelf opnieuw.
+export function durationText(start: string, end: string): string | null {
+  const minutes = minutesBetween(start, end);
+  if (minutes === null) return null;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   if (h === 0) return `${m} minuten`;
