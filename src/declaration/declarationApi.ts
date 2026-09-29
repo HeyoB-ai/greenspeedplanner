@@ -55,6 +55,11 @@ export interface DeclarationView {
   // het scherm nooit om iets vraagt dat nergens heen gaat. NULL = niet van
   // toepassing: een spoeddienst of een dienst zonder begrote eindtijd.
   explain_over_minutes: number | null;
+  // De tijd volgens de PDA van de apotheek (migratie 053). Alleen bij een BENU
+  // selfbilling-dienst; dit is de tijd die BENU vergoedt, en waartegen de
+  // uitloop wordt gemeten.
+  pda_start: string | null;
+  pda_end: string | null;
 }
 
 export interface SubmitInput {
@@ -63,6 +68,12 @@ export interface SubmitInput {
   claimsTravel: boolean;
   ownCarKm: number | null;
   note: string | null;
+  // De PDA-tijd (migratie 053). Altijd meesturen, ook als hij leeg is: de
+  // database beslist of deze dienst er een hoort te hebben, en gooit hem weg bij
+  // een niet-BENU-dienst. Zou het scherm hier zelf over beslissen, dan zijn er
+  // twee plekken die weten wat een BENU-dienst is.
+  pdaStart: string | null;
+  pdaEnd: string | null;
   // De hele lijst gaat mee, ook als hij leeg is: de server vervangt wat er stond.
   // Per regel bijhouden wat gewijzigd is levert alleen toestand op die uit de pas
   // kan lopen.
@@ -137,6 +148,8 @@ export async function submitDeclaration(
       claims_travel: input.claimsTravel,
       own_car_km: input.ownCarKm,
       note: input.note,
+      pda_start: input.pdaStart,
+      pda_end: input.pdaEnd,
       expenses: input.expenses,
     }),
   });
@@ -162,6 +175,23 @@ export function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} en ${names[names.length - 1]}`;
 }
 
+// Is dit een geldige klokstand? Dezelfde vorm als de controle in de Edge
+// Function, zodat het scherm niets doorlaat wat daar alsnog sneuvelt.
+export function isTime(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+// Losse cijfers naar 'HH:MM', terwijl er getypt wordt. De tijdvelden zijn
+// tekstvelden en geen <input type="time">, omdat die laatste geen placeholder
+// toont en de geplande tijd juist grijs IN het vakje hoort te staan. Prijs
+// daarvan is de klok-kiezer op de telefoon; vandaar dat de dubbele punt hier
+// zelf gezet wordt. Wie 0952 typt ziet 09:52 verschijnen, en wie hem zelf
+// intypt merkt er niets van — non-digits gaan er eerst uit.
+export function timeMask(raw: string): string {
+  const cijfers = raw.replace(/\D/g, '').slice(0, 4);
+  return cijfers.length <= 2 ? cijfers : `${cijfers.slice(0, 2)}:${cijfers.slice(2)}`;
+}
+
 // Duur tussen twee 'HH:MM'-tijden in minuten, over middernacht heen. De
 // tegenhanger van duration_minutes() in de database (migratie 051), met dezelfde
 // behandeling van een eindtijd op of vóór de begintijd. Die twee horen hetzelfde
@@ -175,17 +205,56 @@ export function minutesBetween(start: string, end: string): number | null {
   return minutes <= 0 ? minutes + 24 * 60 : minutes;
 }
 
-// Hoeveel langer de dienst duurde dan begroot. NULL zodra er iets ontbreekt —
-// een dienst zonder begrote eindtijd heeft geen uitloop, alleen een duur.
-export function overrunMinutes(
-  plannedStart: string, plannedEnd: string | null,
-  actualStart: string, actualEnd: string,
-): number | null {
-  if (!plannedEnd) return null;
-  const begroot = minutesBetween(plannedStart, plannedEnd);
-  const echt    = minutesBetween(actualStart, actualEnd);
-  if (begroot === null || echt === null) return null;
-  return echt - begroot;
+// Waartegen de uitloop gemeten is. Het scherm moet dat kunnen zéggen: "langer
+// bezig dan gepland" en "langer bezig dan de PDA-tijd" zijn voor een koerier
+// twee verschillende verwijten, en alleen één ervan is er een waar hij iets aan
+// had kunnen doen.
+export interface Overrun {
+  minutes: number;            // werkelijke duur min referentie; negatief = eerder klaar
+  basis: 'pda' | 'gepland';
+}
+
+// Hoeveel langer de dienst duurde dan de referentietijd — de tegenhanger van
+// reference_minutes() uit migratie 053, met dezelfde volgorde:
+//
+//   BENU mét PDA-tijd  → de PDA-tijd, want dat is wat BENU al vergoedt
+//   anders             → de begrote tijd
+//   geen van beide     → NULL, er valt niets te overschrijden
+//
+// Die volgorde moet hier gelijk zijn aan die in de database. Meet het scherm
+// tegen iets anders dan declaration_submit(), dan wordt er om een toelichting
+// gevraagd die de facturatie niet herkent, of gaat er een verzoek naar de
+// apotheek waar de koerier nooit naar gevraagd is.
+//
+// Een half getypte PDA-tijd telt als niet ingevuld en valt dus terug op de
+// begroting — precies wat de database met een NULL doet. Zodra het laatste
+// cijfer staat verspringt de uitkomst naar de PDA-tijd, en zegt het scherm er
+// meteen bij dat het nu daartegen meet.
+export function overrunMinutes(o: {
+  isBenu: boolean;
+  pdaStart: string; pdaEnd: string;
+  plannedStart: string; plannedEnd: string | null;
+  actualStart: string; actualEnd: string;
+}): Overrun | null {
+  const echt = minutesBetween(o.actualStart, o.actualEnd);
+  if (echt === null) return null;
+
+  if (o.isBenu && isTime(o.pdaStart) && isTime(o.pdaEnd)) {
+    const pda = minutesBetween(o.pdaStart, o.pdaEnd);
+    if (pda !== null) return { minutes: echt - pda, basis: 'pda' };
+  }
+
+  if (!o.plannedEnd) return null;
+  const begroot = minutesBetween(o.plannedStart, o.plannedEnd);
+  if (begroot === null) return null;
+  return { minutes: echt - begroot, basis: 'gepland' };
+}
+
+// Hoe het scherm naar die referentie verwijst. Staat hier en niet in de pagina,
+// zodat de melding onder de knop en het label boven het tekstvak niet elk hun
+// eigen bewoording krijgen.
+export function overrunBasisText(basis: Overrun['basis']): string {
+  return basis === 'pda' ? 'de PDA-tijd' : 'gepland';
 }
 
 // Duur tussen twee 'HH:MM'-tijden, over middernacht heen. Alleen om de koerier

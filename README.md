@@ -69,6 +69,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `050_benu_mail_bundling.sql` | de BENU-tijdinvoer als berichtsoort `benu_time_entry` in `mail_outbox`. **Grotendeels teruggedraaid door 051** — de twee mails werden één, maar de koerier hield twee formulieren |
 | `051_uitloop_verantwoorden.sql` | één formulier per dienst: de BENU-inschrijving eruit, `duration_minutes()` als gedeelde som, en de toelichting verplicht zodra de dienst meer dan de drempel uitloopt |
 | `052_meerwerk_sweep_drempel.sql` | de meerwerkdrempel van de lus naar de `WHERE`: `LIMIT` telt alleen nog rijen die ook een `extra_work`-rij opleveren, zodat diensten die op tijd klaar waren de sweep niet langzaam dichtslibben |
+| `053_pda_tijd.sql` | de PDA-tijd als derde tijd op `shift_declarations`, met `reference_minutes()` als gedeelde maatstaf: bij BENU loopt de uitloop tegen de PDA-tijd en niet tegen de begroting |
 
 > `044` t/m `049` (BENU selfbilling, weekpariteit van roosters, ziekteverzuim)
 > staan nog niet in deze tabel; de bestanden zelf zijn leidend.
@@ -1235,6 +1236,20 @@ Bij BENU-filialen die selfbilling doen staat de gewerkte tijd op de **PDA van de
 apotheek**. BENU factureert zichzelf op die registratie, en dat is de tijd die
 vergoed wordt.
 
+### Drie tijden, geen twee
+
+Sinds migratie 053 kent een BENU-dienst er drie. Ze lopen uiteen, en dat is geen
+slordigheid maar de kern van de zaak:
+
+| Tijd | Waar hij vandaan komt | Waar hij voor dient |
+|---|---|---|
+| **PDA-tijd** | de PDA van de apotheek; de koerier leest hem af bij aanvang van zijn dienst en onthoudt hem | dít is wat BENU vergoedt, en de maatstaf waartegen de uitloop wordt gemeten |
+| **geplande tijd** | `shifts.start_time` / `budgeted_end_time` | referentie, verder niets |
+| **werkelijke tijd** | `shift_declarations.actual_start` / `actual_end` | hierop wordt de koerier uitbetaald |
+
+Bij elke andere apotheek zijn het er twee: geen PDA, dus de uitloop loopt tegen
+de geplande tijd. Dat onderscheid staat op één plek — `reference_minutes()`.
+
 ### Wat er mis was: twee ketens voor dezelfde vraag
 
 Migratie 046 bouwde voor BENU een eigen keten — een eigen koeriersformulier, een
@@ -1288,6 +1303,42 @@ twee *formulieren* staan. 051 draait die inschrijving terug.
 > dicht. Dit is juist een invoerfout die de koerier zelf kan herstellen: met de
 > gewone `P0001` komt de melding onder de knop en blijft alles ingevuld staan.
 
+### Wat migratie 053 daarna bijstelde
+
+051 behandelde de PDA-tijd als een **aanwijzing**: een zin boven de tijdvelden,
+*neem ze over van de PDA*. Dat volgt de dienst niet. De koerier leest de PDA-tijd
+af bij aanvang en rijdt daarna zijn eigen route; die twee lopen uiteen, en juist
+het verschil is wat er aan de apotheek wordt voorgelegd. Typte hij de PDA-tijd in
+het veld voor de werkelijke tijd, dan was zijn eigen uitloop onzichtbaar en werd
+hij uitbetaald op de klok van de apotheek. Twee betekenissen in één veld.
+
+1. **De PDA-tijd is een eigen gegeven.** `shift_declarations.pda_start` en
+   `pda_end`, nullable. `declaration_submit()` eist ze bij een BENU-dienst en
+   gooit weg wat er bij een andere apotheek toch wordt meegestuurd: een kolom die
+   bij de helft van de rijen iets anders betekent is later niet meer te lezen.
+2. **Eén maatstaf, twee gebruikers.** `reference_minutes(is_benu, pda_start,
+   pda_end, plan_start, plan_end)` → de PDA-tijd bij BENU, anders de begroting,
+   en NULL als er geen van beide is. `declaration_submit()` bepaalt daarmee of er
+   een verklaring nodig is en `extra_work_sweep()` of er een verzoek uitgaat.
+   Lopen die uiteen, dan vraagt het formulier om iets wat de facturatie niet
+   herkent — of andersom.
+3. **`extra_work.planned_minutes` is voortaan de referentie**, niet per se de
+   begroting. Bij BENU is dat de PDA-tijd, en dat is precies wat de apotheek in
+   het verzoek te zien krijgt: zij moet kunnen nagaan waar die extra minuten
+   bovenop komen. De voorwaarde `budgeted_end_time IS NOT NULL` is daarmee
+   vervallen — een BENU-dienst met een PDA-tijd maar zonder begroting heeft wél
+   een referentie.
+4. **Het formulier vraagt er apart naar.** Twee tijdvelden bóven de werkelijke
+   tijd, met `uu:mm` als placeholder en niet de geplande tijd: stond die daar,
+   dan is de begroting overnemen een kwestie van doorklikken en meet de uitloop
+   zichzelf tegen zichzelf. De melding zegt erbij waartegen gemeten is — *"langer
+   bezig dan de PDA-tijd"* of *"dan gepland"*, want dat zijn voor een koerier
+   twee verschillende verwijten.
+
+> **`invoice_lines()` is niet aangeraakt.** Of BENU op de PDA-tijd gefactureerd
+> moet worden verandert de bedragen, en dat is een aparte beslissing. Tot die
+> genomen is dient de PDA-tijd alleen als maatstaf voor de uitloop.
+
 ### Wat blijft staan
 
 `benu_shift_entries` en `benu_pharmacy_entries` blijven, met hun pagina's
@@ -1309,11 +1360,26 @@ npx supabase functions deploy send-shift-mail
 npm run build   # de invulpagina zelf
 ```
 
-`shift-declaration` hoeft NIET opnieuw uitgerold te worden. Die functie geeft
-terug wat `declaration_by_token()` oplevert, zonder de velden te benoemen —
+`shift-declaration` hoefde voor 051 NIET opnieuw uitgerold te worden. Die functie
+geeft terug wat `declaration_by_token()` oplevert, zonder de velden te benoemen —
 de twee nieuwe kolommen komen er dus vanzelf doorheen. `send-shift-mail` wél: de
 uitgerolde versie van 050 zoekt nog naar `benu_expire_stale()`, en die bestaat
 niet meer.
+
+Daarna migratie 053, en dan **wel** `shift-declaration`: die neemt sindsdien
+`pda_start` en `pda_end` aan en controleert ze op vorm, dus hier komt er wel
+degelijk code bij.
+
+```powershell
+npx supabase functions deploy shift-declaration
+npm run build   # de invulpagina: het PDA-veldenpaar
+```
+
+Volgorde: eerst de migratie, dan de functie. De nieuwe `declaration_submit()`
+heeft `p_pda_start` en `p_pda_end` achteraan staan met `DEFAULT NULL`, dus de
+oude Edge Function blijft werken zolang 053 al gedraaid heeft. Andersom niet: een
+functie die parameters meestuurt die de database nog niet kent, krijgt bij elke
+opgave een fout terug.
 
 En de cron van de BENU-dagmail opzeggen, anders blijft er elke avond een
 verdwenen functie aangeroepen worden. De job heette `send-benu-daily-mail` en
@@ -1334,11 +1400,18 @@ SELECT jobid, jobname, schedule, active FROM cron.job ORDER BY jobid;
 > lopende BENU-formulieren nog openstaan: `benu-courier-form` gebruikt hem om de
 > apotheekmail een knop te geven.
 
-Controleren of het klopt: laat een koerier met een BENU-dienst een uitloop van
-meer dan een kwartier invullen. Het toelichtingsveld hoort dan van *"Iets
-bijzonders? (mag leeg blijven)"* te veranderen in *"Je was N minuten langer bezig
-dan gepland. Waardoor kwam dat?"*, en indienen zonder tekst hoort geweigerd te
+Controleren of het klopt: open het formulier van een BENU-dienst. Bovenaan hoort
+*"Wat stond er op de PDA?"* te staan met twee lege velden, en indienen zonder die
+twee hoort geweigerd te worden. Vul daarna een werkelijke tijd in die meer dan een
+kwartier boven de PDA-tijd uitkomt: het toelichtingsveld verandert dan van *"Iets
+bijzonders? (mag leeg blijven)"* in *"Je was N minuten langer bezig dan de
+PDA-tijd. Waardoor kwam dat?"*, en indienen zonder tekst hoort geweigerd te
 worden — zowel door het scherm als door de database.
+
+Doe dezelfde proef op een gewone dienst: daar hoort het PDA-blok helemaal niet te
+staan, en de melding *"dan gepland"* te zeggen. Staat er bij een BENU-dienst *"dan
+gepland"*, dan is `reference_minutes()` niet aan het woord en meet het scherm
+tegen de verkeerde tijd.
 
 ---
 

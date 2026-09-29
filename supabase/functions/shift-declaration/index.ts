@@ -56,6 +56,11 @@ interface SubmitBody {
   claims_travel?: unknown;
   own_car_km?: unknown;
   note?: unknown;
+  // De tijd volgens de PDA van de apotheek (migratie 053). Alleen bij een BENU
+  // selfbilling-dienst; de database gooit hem weg als de dienst er geen is, en
+  // eist hem als de dienst er wél een is.
+  pda_start?: unknown;
+  pda_end?: unknown;
   // Onkosten (migratie 028): omschrijving + bedrag, als tekst zodat een half
   // getypt getal onderweg niet stilletjes 0 wordt. De database valideert ze.
   expenses?: unknown;
@@ -126,6 +131,15 @@ Deno.serve(async (req) => {
 
     const note = typeof body.note === 'string' ? body.note.slice(0, 2000) : null;
 
+    // De PDA-tijd is optioneel op dit niveau: of hij verplicht is hangt af van
+    // de dienst, en dat weet alleen de database. Hier wordt alleen de VORM
+    // bewaakt — een half getypte tijd hoort niet als klokstand de database in.
+    const pdaStart = typeof body.pda_start === 'string' ? body.pda_start : '';
+    const pdaEnd   = typeof body.pda_end   === 'string' ? body.pda_end   : '';
+    if ((pdaStart && !TIME_RE.test(pdaStart)) || (pdaEnd && !TIME_RE.test(pdaEnd))) {
+      return json({ error: 'Vul de PDA-tijden in als uu:mm.' }, 400);
+    }
+
     const { error } = await admin.rpc('declaration_submit', {
       p_token: token,
       p_actual_start: start,
@@ -133,6 +147,8 @@ Deno.serve(async (req) => {
       p_claims_travel: claims,
       p_own_car_km: km,
       p_note: note,
+      p_pda_start: pdaStart || null,
+      p_pda_end:   pdaEnd   || null,
     });
 
     if (error) {

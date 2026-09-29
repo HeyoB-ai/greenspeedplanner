@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Clock, Info, MapPin, Plus, Trash2 } from 'lucide-react';
 import {
   DeclarationClosedError, DeclarationView, LinkInvalidError, durationText, formatDate,
-  joinNames, loadDeclaration, overrunMinutes, submitDeclaration,
+  isTime, joinNames, loadDeclaration, overrunBasisText, overrunMinutes, submitDeclaration,
+  timeMask,
 } from './declarationApi';
 
 interface Props {
@@ -24,6 +25,11 @@ export default function DeclarationPage({ token }: Props) {
 
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
+  // De tijd volgens de PDA van de apotheek (migratie 053). Alleen bij een BENU
+  // selfbilling-dienst; bij de rest blijven deze twee leeg en gaan ze als null
+  // mee.
+  const [pdaStart, setPdaStart] = useState('');
+  const [pdaEnd, setPdaEnd] = useState('');
   const [claims, setClaims] = useState<boolean | null>(null);
   const [km, setKm] = useState('');
   const [note, setNote] = useState('');
@@ -46,6 +52,8 @@ export default function DeclarationPage({ token }: Props) {
         // planner er niet naar gekeken heeft.
         setStart(d.actual_start ?? '');
         setEnd(d.actual_end ?? '');
+        setPdaStart(d.pda_start ?? '');
+        setPdaEnd(d.pda_end ?? '');
         setClaims(d.claims_travel);
         setKm(d.own_car_km != null ? String(d.own_car_km) : '');
         setNote(d.courier_note ?? '');
@@ -62,11 +70,51 @@ export default function DeclarationPage({ token }: Props) {
       .finally(() => setLoading(false));
   }, [token]);
 
+  // Eén plek waar de uitloop vandaan komt. De controle onder de knop en het
+  // label boven het tekstvak moeten hetzelfde getal én dezelfde maatstaf
+  // noemen; twee berekeningen naast elkaar lopen vroeg of laat uiteen, en dan
+  // stelt het formulier een vraag die de knop niet stelt.
+  function berekenUitloop() {
+    if (!view) return null;
+    return overrunMinutes({
+      isBenu: view.is_benu_selfbilling,
+      pdaStart, pdaEnd,
+      plannedStart: view.start_time, plannedEnd: view.budgeted_end_time,
+      actualStart: start, actualEnd: end,
+    });
+  }
+
   async function save() {
     if (!view) return;
     setError('');
 
+    // De PDA-tijd eerst, want hij staat bovenaan het formulier: een melding over
+    // een veld verderop laat de koerier zoeken naar wat er mis is.
+    //
+    // Verplicht bij BENU, en dat is geen scherpslijperij — het is de tijd
+    // waarop BENU zichzelf factureert. Ontbreekt hij, dan wordt de uitloop tegen
+    // de planning gemeten en belasten we een apotheek iets door dat zij al
+    // vergoedt. declaration_submit() weigert het ook; hier staat het alleen
+    // meteen.
+    if (view.is_benu_selfbilling) {
+      if (!pdaStart || !pdaEnd) {
+        setError('Vul de begintijd en de eindtijd van de PDA in.');
+        return;
+      }
+      if (!isTime(pdaStart) || !isTime(pdaEnd)) {
+        setError('Vul de PDA-tijden in als uu:mm, bijvoorbeeld 09:52.');
+        return;
+      }
+    }
+
     if (!start || !end) { setError('Vul allebei de tijden in.'); return; }
+    // Halve invoer tegenhouden vóór de server hem weigert: '9:5' of '25:00'
+    // komen anders terug als een foutmelding uit de Edge Function, en dan staat
+    // de koerier te kijken naar een veld dat er ingevuld uitziet.
+    if (!isTime(start) || !isTime(end)) {
+      setError('Vul de tijden in als uu:mm, bijvoorbeeld 09:52.');
+      return;
+    }
     // Bij een zzp'er staat de reiskostenvraag niet op het scherm; dan is er ook
     // niets onbeantwoord. Wat er de deur uit gaat is een harde false: geen
     // claim, ongeacht wat er ooit in de rij stond.
@@ -95,14 +143,16 @@ export default function DeclarationPage({ token }: Props) {
       return;
     }
 
-    // Uitloop boven de drempel vraagt om een onderbouwing (migratie 051). De
-    // database weigert het ook — dat is de echte bewaker, want dit scherm is
-    // niet de enige weg naar declaration_submit(). Hier staat de melding alleen
-    // meteen, zonder dat er eerst een ronde naar de server hoeft.
+    // Uitloop boven de drempel vraagt om een onderbouwing (migratie 051, sinds
+    // 053 gemeten tegen de PDA-tijd als die er is). De database weigert het ook
+    // — dat is de echte bewaker, want dit scherm is niet de enige weg naar
+    // declaration_submit(). Hier staat de melding alleen meteen, zonder dat er
+    // eerst een ronde naar de server hoeft.
     const drempel = view.explain_over_minutes;
-    const uitloop = overrunMinutes(view.start_time, view.budgeted_end_time, start, end);
-    if (drempel !== null && uitloop !== null && uitloop >= drempel && note.trim() === '') {
-      setError(`Je was ${uitloop} minuten langer bezig dan gepland. Vertel kort waardoor dat kwam.`);
+    const uitloop = berekenUitloop();
+    if (drempel !== null && uitloop !== null && uitloop.minutes >= drempel && note.trim() === '') {
+      setError(`Je was ${uitloop.minutes} minuten langer bezig dan `
+             + `${overrunBasisText(uitloop.basis)}. Vertel kort waardoor dat kwam.`);
       return;
     }
 
@@ -116,6 +166,8 @@ export default function DeclarationPage({ token }: Props) {
         claimsTravel: view.is_contractor ? false : claims === true,
         ownCarKm: kmValue,
         note: note.trim() || null,
+        pdaStart: view.is_benu_selfbilling ? pdaStart : null,
+        pdaEnd: view.is_benu_selfbilling ? pdaEnd : null,
         expenses: expenses.map((e) => ({
           description: e.description.trim(),
           amount_eur: e.amount.trim().replace(',', '.'),
@@ -198,10 +250,10 @@ export default function DeclarationPage({ token }: Props) {
   // pas bij het indienen hoort dat er nog een veld bij komt, moet terugscrollen
   // en is al half weg. Nu verschijnt de vraag op het moment dat hij zijn
   // eindtijd invult — en ziet hij meteen of hij zich in de tijd vergist heeft.
-  const overrun = overrunMinutes(view.start_time, view.budgeted_end_time, start, end);
+  const overrun = berekenUitloop();
   const mustExplain = view.explain_over_minutes !== null
                    && overrun !== null
-                   && overrun >= view.explain_over_minutes;
+                   && overrun.minutes >= view.explain_over_minutes;
   const explainMissing = mustExplain && note.trim() === '';
 
   return (
@@ -235,35 +287,87 @@ export default function DeclarationPage({ token }: Props) {
         </div>
       )}
 
+      {/* ── De PDA-tijd ─────────────────────────────────────────────────── */}
+      {/* Alleen bij BENU selfbilling, en bovenaan: de koerier leest deze tijd
+          van de PDA af bij aanvang van zijn dienst, dus het is het eerste wat
+          hij paraat heeft. Staat hij onder de werkelijke tijd, dan is de kans
+          groot dat hij zijn eigen tijden twee keer invult.
+
+          Dit is een eigen gegeven en geen aanwijzing bij een ander veld. BENU
+          factureert zichzelf op déze registratie; de werkelijke tijd is waarop
+          de koerier wordt uitbetaald. Die twee lopen uiteen, en juist het
+          verschil is wat er aan de apotheek wordt voorgelegd. */}
+      {view.is_benu_selfbilling && (
+      <section className="mt-5">
+        <h2 className="text-sm font-semibold text-slate-800">Wat stond er op de PDA?</h2>
+        <p className="mt-1 rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-600">
+          Neem deze twee over van de <strong>PDA van BENU</strong>, niet van je eigen klok.
+          Dit is de tijd die BENU vergoedt.
+        </p>
+        {/* Geen geplande tijd als placeholder: die hoort bij de werkelijke tijd
+            hieronder. Zou hij hier staan, dan is 'uu:mm' invullen met de
+            begroting een kwestie van doorklikken — en dan meet de uitloop
+            zichzelf tegen zichzelf. */}
+        <div className="mt-2 flex items-start gap-3">
+          <label className="flex-1">
+            <span className="block text-xs text-slate-500 mb-1">PDA begin</span>
+            <input
+              type="text" inputMode="numeric" maxLength={5}
+              value={pdaStart} disabled={busy}
+              placeholder="uu:mm"
+              onChange={(e) => setPdaStart(timeMask(e.target.value))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60 placeholder:text-slate-400"
+            />
+          </label>
+          <label className="flex-1">
+            <span className="block text-xs text-slate-500 mb-1">PDA eind</span>
+            <input
+              type="text" inputMode="numeric" maxLength={5}
+              value={pdaEnd} disabled={busy}
+              placeholder="uu:mm"
+              onChange={(e) => setPdaEnd(timeMask(e.target.value))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60 placeholder:text-slate-400"
+            />
+          </label>
+        </div>
+      </section>
+      )}
+
       {/* ── Vraag 1: de werkelijke duur ─────────────────────────────────── */}
       <section className="mt-5">
         <h2 className="text-sm font-semibold text-slate-800">Hoe lang duurde de dienst werkelijk?</h2>
-        {/* BENU selfbilling: de tijden komen van hún PDA en niet van de klok van
-            de koerier. BENU factureert zichzelf op die registratie, dus een
-            eigen schatting levert een verschil op dat later niemand meer kan
-            uitleggen. Dit is het enige wat zo'n dienst anders maakt — vandaar
-            een zin en geen tweede formulier. */}
+        {/* Bij BENU staat de PDA-tijd hierboven, en dit veld vraagt uitdrukkelijk
+            iets anders: wat de koerier werkelijk gereden heeft. Hierop wordt hij
+            uitbetaald, en het verschil met de PDA-tijd is wat we aan de apotheek
+            voorleggen. */}
         {view.is_benu_selfbilling && (
-          <p className="mt-1 rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-600">
-            Neem de begintijd en de eindtijd over van de <strong>PDA van BENU</strong>, niet van je
-            eigen klok. Die tijd wordt vergoed.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Nu je eigen tijden, dus wanneer je werkelijk begon en klaar was.
           </p>
         )}
-        <div className="mt-2 flex items-center gap-3">
+        {/* De geplande tijd staat grijs IN het vakje en verdwijnt zodra de
+            koerier begint te typen. Daarvoor moeten het tekstvelden zijn:
+            <input type="time"> toont altijd --:-- en kent geen placeholder.
+            Zie timeMask() voor wat dat kost en hoe het wordt opgevangen. */}
+        <div className="mt-2 flex items-start gap-3">
           <label className="flex-1">
             <span className="block text-xs text-slate-500 mb-1">Begonnen om</span>
             <input
-              type="time" value={start} disabled={busy}
-              onChange={(e) => setStart(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60"
+              type="text" inputMode="numeric" maxLength={5}
+              value={start} disabled={busy}
+              placeholder={view.start_time}
+              onChange={(e) => setStart(timeMask(e.target.value))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60 placeholder:text-slate-400"
             />
           </label>
           <label className="flex-1">
             <span className="block text-xs text-slate-500 mb-1">Klaar om</span>
             <input
-              type="time" value={end} disabled={busy}
-              onChange={(e) => setEnd(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60"
+              type="text" inputMode="numeric" maxLength={5}
+              value={end} disabled={busy}
+              placeholder={view.budgeted_end_time ?? 'uu:mm'}
+              onChange={(e) => setEnd(timeMask(e.target.value))}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-base tabular-nums bg-white disabled:opacity-60 placeholder:text-slate-400"
             />
           </label>
         </div>
@@ -406,9 +510,13 @@ export default function DeclarationPage({ token }: Props) {
           de twee de planning leest. */}
       <section className="mt-5">
         <label className="block">
+          {/* Waartegen gemeten is staat erbij. Bij een BENU-dienst is dat de
+              PDA-tijd en niet de planning: liep de planning er zelf naast, dan
+              is dat geen uitloop waar een koerier iets over te zeggen heeft. */}
           <span className="block text-sm text-slate-700">
-            {mustExplain
-              ? `Je was ${overrun} minuten langer bezig dan gepland. Waardoor kwam dat?`
+            {mustExplain && overrun
+              ? `Je was ${overrun.minutes} minuten langer bezig dan `
+                + `${overrunBasisText(overrun.basis)}. Waardoor kwam dat?`
               : 'Iets bijzonders? (mag leeg blijven)'}
           </span>
           {mustExplain && (
@@ -512,6 +620,16 @@ function ReadOnlyView({ view }: { view: DeclarationView }) {
       <section className="mt-4">
         <h2 className="text-sm font-semibold text-slate-800">Wat je hebt doorgegeven</h2>
         <dl className="mt-2 space-y-1.5 text-sm">
+          {/* Bij een BENU-dienst zijn dit twee verschillende opgaven, en de
+              PDA-tijd is degene waar het bedrag aan hangt. Hem hier weglaten
+              zou een koerier laten terugbellen om te vragen wat hij ook alweer
+              had doorgegeven. */}
+          {view.pda_start && view.pda_end && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Volgens de PDA</dt>
+              <dd className="tabular-nums text-right">{view.pda_start}–{view.pda_end}</dd>
+            </div>
+          )}
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Gewerkt</dt>
             <dd className="tabular-nums text-right">
