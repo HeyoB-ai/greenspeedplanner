@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Building2, CalendarClock, ClipboardList, Clock, FileText, Home, LogOut, Phone, Receipt, RefreshCw, Settings, Trash2, User, Users, Wallet } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarClock, ClipboardList, Clock, FileText, History, Home, LogOut, Phone, Receipt, RefreshCw, Settings, Trash2, User, Users, Wallet } from 'lucide-react';
 import { isConfigured } from './lib/supabase';
 import { isPlanner, loadSessionUser, logout } from './lib/session';
 import { SessionUser, Shift } from './types';
@@ -16,6 +16,7 @@ import Employees from './planner/Employees';
 import ExtraWork from './planner/ExtraWork';
 import BenuOverview from './planner/BenuOverview';
 import Declarations from './planner/Declarations';
+import AuditLog from './planner/AuditLog';
 import { deleteShift } from './planner/plannerService';
 import { getMaxHolidayDate, scheduleHorizonEndISO, topUpScheduleWindow } from './planner/scheduleService';
 import { Attention, getAttention, NO_ATTENTION } from './planner/attentionService';
@@ -44,6 +45,7 @@ export default function App() {
   const [showExtraWork, setShowExtraWork] = useState(false);
   const [showBenu, setShowBenu] = useState(false);
   const [showDeclarations, setShowDeclarations] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
   const [maxHoliday, setMaxHoliday] = useState<string | null>(null);
   const [attention, setAttention] = useState<Attention>(NO_ATTENTION);
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -106,6 +108,11 @@ export default function App() {
   }
 
   if (!user) return <Login onLoggedIn={setUser} />;
+
+  // Het logboek laat zien wat collega's deden; dat is een andere toegang dan
+  // plannen en hoort bij één rol. audit_log_list() controleert dit zelf ook —
+  // dit is gemak, de database is de bewaker.
+  const isSuperuser = user?.role === 'superuser';
 
   if (!isPlanner(user)) {
     return (
@@ -182,6 +189,11 @@ export default function App() {
                 badge: attention.couriersWithoutPhone,
                 onSelect: () => setShowContacts(true),
               },
+              ...(isSuperuser ? [{
+                key: 'auditlog', label: 'Logboek', icon: <History size={15} />,
+                title: 'Wie heeft wat wanneer gewijzigd — ook buiten de Planner om',
+                onSelect: () => setShowAuditLog(true),
+              }] : []),
             ]}
           />
 
@@ -367,6 +379,8 @@ export default function App() {
       )}
 
       {showBenu && <BenuOverview onClose={() => setShowBenu(false)} />}
+
+      {showAuditLog && isSuperuser && <AuditLog onClose={() => setShowAuditLog(false)} />}
 
       {scheduleTarget && (
         <PharmacySchedule
