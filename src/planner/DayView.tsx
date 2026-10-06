@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Bike, Car, CheckCircle2, MapPin, MessageSquare, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bike, CalendarDays, Car, CheckCircle2, MapPin, MessageSquare, Pencil, Trash2, UserCircle2, Users } from 'lucide-react';
 import { Shift, SmsLogEntry } from '../types';
 import { ConflictOther, ShiftConflict } from './conflicts';
 import { TRANSPORT_LABELS, TYPE_STYLES, WEEKDAY_LABELS_LONG, carOwnerLabel } from './constants';
@@ -15,10 +15,16 @@ interface Props {
   onConfirm: (shift: Shift) => void;
   conflicts: Map<string, ShiftConflict>;
   smsLog: Map<string, SmsLogEntry>;
+  // De dienst waarop in het weekoverzicht geklikt is. Gevuld = alleen die dienst
+  // tonen; de rest van de dag blijft één klik weg. Leeg = de hele dag.
+  focusShiftId?: string | null;
+  onShowAll?: () => void;
 }
 
-// Ingezoomde dagweergave met meer detail per dienst.
-export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm, conflicts, smsLog }: Props) {
+// Ingezoomde dagweergave met meer detail per dienst. Met focusShiftId toont hij
+// alleen de aangeklikte dienst: op een drukke dag is de hele lijst geen antwoord
+// op "wat is er met déze dienst".
+export default function DayView({ date, shifts, pharmacyNames, institutionNames, onBack, onEdit, onDelete, onConfirm, conflicts, smsLog, focusShiftId, onShowAll }: Props) {
   const describeOther = (o: ConflictOther) => {
     const time = o.endTime ? `${o.startTime}–${o.endTime}` : o.startTime;
     const phs = o.pharmacyIds.map((id) => pharmacyNames.get(id) ?? id).join(', ');
@@ -26,6 +32,11 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
   };
   const dow = (date.getDay() + 6) % 7;
   const heading = `${WEEKDAY_LABELS_LONG[dow]} ${date.getDate()}-${date.getMonth() + 1}-${date.getFullYear()}`;
+  // Staat de aangeklikte dienst niet (meer) in de lijst, dan valt de weergave
+  // terug op de hele dag in plaats van op een leeg scherm.
+  const focused = focusShiftId ? shifts.find((s) => s.id === focusShiftId) : undefined;
+  const visibleShifts = focused ? [focused] : shifts;
+  const hiddenCount = shifts.length - visibleShifts.length;
 
   return (
     <div className="max-w-3xl mx-auto p-4">
@@ -39,7 +50,7 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
       )}
 
       <div className="space-y-2">
-        {shifts.map((s) => {
+        {visibleShifts.map((s) => {
           const style = TYPE_STYLES[s.shiftType];
           const isOpen = !s.courierId;
           const TransportIcon = s.transportMode === 'car' ? Car : Bike;
@@ -163,6 +174,16 @@ export default function DayView({ date, shifts, pharmacyNames, institutionNames,
           );
         })}
       </div>
+
+      {focused && hiddenCount > 0 && onShowAll && (
+        <button
+          type="button" onClick={onShowAll}
+          className="mt-3 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 hover:underline"
+        >
+          <CalendarDays size={14} />
+          Toon alle {shifts.length} diensten van {WEEKDAY_LABELS_LONG[dow].toLowerCase()}
+        </button>
+      )}
     </div>
   );
 }

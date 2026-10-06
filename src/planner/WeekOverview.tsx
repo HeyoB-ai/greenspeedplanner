@@ -73,6 +73,9 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
   const [onlyDrafts, setOnlyDrafts] = useState(false);
   const [draftKind, setDraftKind] = useState<'all' | 'manual' | 'schedule'>('all');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  // De dienst waarop geklikt is. De dagweergave toont dan alleen die dienst; de
+  // rest van de dag is daar één klik weg.
+  const [focusShiftId, setFocusShiftId] = useState<string | null>(null);
   // Apotheken op de y-as (zoals L1nda) of koeriers. Apotheken blijft de
   // standaard: daar zijn gebruikers aan gewend, en alleen daar kun je plannen.
   const [view, setView] = useState<'pharmacy' | 'courier'>('pharmacy');
@@ -125,6 +128,16 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [weekStartISO, weekEndISO, refreshSignal]);
+
+  // Is de uitgelichte dienst verwijderd, dan terug naar de week: de planner kwam
+  // voor die ene dienst, niet voor de rest van de dag. shifts wordt bij herladen
+  // pas vervangen als de nieuwe lijst binnen is, dus dit flikkert niet.
+  useEffect(() => {
+    if (focusShiftId && !shifts.some((s) => s.id === focusShiftId)) {
+      setFocusShiftId(null);
+      setSelectedDay(null);
+    }
+  }, [shifts, focusShiftId]);
 
   const passesCourierFilter = (s: Shift): boolean => {
     if (courierFilter === 'all') return true;
@@ -305,7 +318,7 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
                     <div key={s.id} className={`rounded-md ${s.sickLeave ? 'bg-red-50' : ''}`}>
                       <div className="flex items-center">
                         <div className="min-w-0 flex-1">
-                          <ShiftChip shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => setSelectedDay(d)} />
+                          <ShiftChip shift={s} conflict={conflicts.get(s.id)} sms={smsLog.get(s.id)} onClick={() => { setSelectedDay(d); setFocusShiftId(s.id); }} />
                         </div>
                         {s.sickLeave && (
                           <span className="ml-1 inline-flex items-center rounded bg-red-600 px-1 py-0.5 text-xs font-medium text-white" title="Ziek gemeld">Z</span>
@@ -337,7 +350,9 @@ export default function WeekOverview({ onCreate, onEdit, onDelete, onOpenSchedul
         shifts={dayShifts}
         pharmacyNames={pharmacyName}
         institutionNames={institutionNames}
-        onBack={() => setSelectedDay(null)}
+        onBack={() => { setSelectedDay(null); setFocusShiftId(null); }}
+        focusShiftId={focusShiftId}
+        onShowAll={() => setFocusShiftId(null)}
         onEdit={onEdit}
         onDelete={onDelete}
         onConfirm={(s) => handleConfirm([s.id])}
