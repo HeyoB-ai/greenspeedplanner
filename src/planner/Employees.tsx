@@ -46,6 +46,26 @@ export default function Employees({ onClose }: Props) {
   // normalizePhone() gaat.
   const [phoneDraft, setPhoneDraft] = useState('');
 
+  // Het formulier staat boven de lijst. Wie halverwege de lijst op Bewerken
+  // klikt, zag niets gebeuren: het formulier verscheen buiten beeld. Daarom na
+  // het openen ernaartoe scrollen en de focus op het eerste veld.
+  //
+  // Een eigen teller en niet `form` zelf als aanleiding: `form` verandert bij
+  // elke toetsaanslag, en dan zou het venster tijdens het typen steeds terug
+  // naar boven springen. En het moet ná de render: vlak na setForm bestaat het
+  // formulier nog niet in de DOM.
+  const formRef = useRef<HTMLDivElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+  const [formOpened, setFormOpened] = useState(0);
+
+  useEffect(() => {
+    if (formOpened === 0) return;
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // preventScroll: anders springt focus() er meteen heen en breekt hij de
+    // vloeiende scroll hierboven af.
+    firstFieldRef.current?.focus({ preventScroll: true });
+  }, [formOpened]);
+
   async function reload() {
     setLoading(true);
     try {
@@ -148,6 +168,7 @@ export default function Employees({ onClose }: Props) {
     setPhoneDraft(e.userProfileId
       ? contactByCourier.get(e.userProfileId)?.phoneE164 ?? ''
       : '');
+    setFormOpened((n) => n + 1);
   }
 
   async function save() {
@@ -233,7 +254,7 @@ export default function Employees({ onClose }: Props) {
         <div className="p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <button
-              onClick={() => { setImportReport(null); setForm({ ...EMPTY }); setPhoneDraft(''); }}
+              onClick={() => { setImportReport(null); setForm({ ...EMPTY }); setPhoneDraft(''); setFormOpened((n) => n + 1); }}
               disabled={busy}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
             >
@@ -322,10 +343,10 @@ export default function Employees({ onClose }: Props) {
 
           {/* ── Formulier ────────────────────────────────────────────────── */}
           {form && (
-            <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 space-y-3">
+            <div ref={formRef} className="rounded-lg bg-slate-50 border border-slate-200 p-4 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Field label="Voornaam">
-                  <input value={form.first_name} disabled={busy}
+                  <input ref={firstFieldRef} value={form.first_name} disabled={busy}
                     onChange={(e) => setForm({ ...form, first_name: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white" />
                 </Field>
