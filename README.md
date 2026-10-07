@@ -71,6 +71,7 @@ SQL Editor van de gedeelde Greenspeed-database, op volgorde:
 | `052_meerwerk_sweep_drempel.sql` | de meerwerkdrempel van de lus naar de `WHERE`: `LIMIT` telt alleen nog rijen die ook een `extra_work`-rij opleveren, zodat diensten die op tijd klaar waren de sweep niet langzaam dichtslibben |
 | `053_pda_tijd.sql` | de PDA-tijd als derde tijd op `shift_declarations`, met `reference_minutes()` als gedeelde maatstaf: bij BENU loopt de uitloop tegen de PDA-tijd en niet tegen de begroting |
 | `054_meerwerk_referentievenster.sql` | het referentievenster als kopie in `extra_work`, en mee in de mail, de apotheekpagina en het plannerscherm: de apotheek ziet waartegen gemeten is en kan de minuten narekenen |
+| `057_employee_addresses.sql` | het woonadres wordt bewaard: `employee_addresses`, één vrije regel per medewerker; `courier_address_get()` en `_set()` alleen voor planners, en `has_address` in `courier_home_overview()`. Bewust niet in het logboek |
 
 > `044` t/m `049` (BENU selfbilling, weekpariteit van roosters, ziekteverzuim)
 > staan nog niet in deze tabel; de bestanden zelf zijn leidend.
@@ -783,13 +784,67 @@ wilt het zien vóór het factureren en niet erna.
 > hieronder gedaan zijn. `declaration_settings.active_from` beschermt tegen mail
 > over de hele historie, maar alleen als hij klopt.
 
-### Het woonadres wordt niet opgeslagen
+### Het woonadres wordt bewaard
 
-Het adres gaat één keer naar de Edge Function `courier-distances`, die het
-geocodeert, de route-afstanden berekent naar álle apotheken waar de koerier aan
-gekoppeld is, en **alleen die afstanden** wegschrijft in `courier_distances`.
-Geen bewaartermijn op adresgegevens, en een lek levert niemands woonplaats op.
-Het invoerveld in *Afstanden* wordt na een geslaagde berekening leeggemaakt.
+> **Ontwerpwijziging, 7 oktober 2026 (Heyo).** Tot die datum werd het woonadres
+> nergens bewaard: het ging één keer naar de Edge Function `courier-distances` en
+> verdween daarna. Dat uitgangspunt is vervallen. Elke herberekening vroeg het
+> adres opnieuw, en een herberekening is nodig zodra een koerier aan een nieuwe
+> apotheek wordt gekoppeld — anders blijft zijn declaratie daar onvolledig. Het
+> adres opzoeken en overtypen kostte tijd en leverde bij een tikfout een verkeerde
+> vergoeding op.
+
+**Waar het staat.** In `employee_addresses` (migratie 057): één vrije regel per
+medewerker, bijvoorbeeld *Zwarteweg 31, 1405 AB Bussum*, gekoppeld aan `employees`
+met `ON DELETE CASCADE`. Geen losse kolommen voor straat, postcode en plaats: het
+adres heeft één doel — de geocoder voeden — en die leest een vrije regel net zo
+goed.
+
+**Wie erbij kan.** Alleen planners (`is_privileged()`), en alleen via
+`courier_address_get()` en `courier_address_set()`. Koeriers kunnen er niet bij,
+ook niet bij hun eigen adres. `authenticated` heeft geen recht op de tabel zelf,
+zodat een planner-sessie niet alle adressen in één verzoek kan ophalen; de policy
+is de tweede verdedigingslinie. De Edge Function leest het adres als
+`service_role` wanneer er geen wordt meegestuurd. Wordt er wél een adres
+meegestuurd, dan rekent ze daarmee en slaat ze het **niet** op — opslaan loopt
+alleen via `courier_address_set()`. Het adres en de coördinaten komen in geen
+logregel en in geen antwoord.
+
+**Waarom niet in het logboek.** `audit_log` (migratie 056) is append-only. Een
+adres dat daarin terechtkomt is niet meer te wissen, ook niet als iemand uit
+dienst gaat of om verwijdering vraagt. `employee_addresses` heeft daarom bewust
+geen audit-trigger, en migratie 057 haalt er uitdrukkelijk een weg mocht die er
+ooit op komen.
+
+**Invoeren.** In *Beheer → Afstanden* staat het bewaarde adres in het veld zodra
+je een koerier openklapt. *Berekenen* slaat een gewijzigd adres eerst op en rekent
+daarna met het bewaarde. *Alle afstanden berekenen* loopt één voor één langs alle
+koeriers met een bewaard adres — niet parallel, vanwege de limieten van de
+geocoder — en meldt na afloop per koerier wat er misging.
+
+In bulk kan via de SQL Editor. `courier_address_set()` werkt daar niet (er is geen
+ingelogde planner, dus `is_privileged()` is onwaar); schrijf dan rechtstreeks in
+de tabel:
+
+```sql
+INSERT INTO public.employee_addresses (employee_id, address_line)
+SELECT e.id, v.adres
+FROM (VALUES
+  ('<personeelsnummer>', 'Zwarteweg 31, 1405 AB Bussum')
+) AS v(nummer, adres)
+JOIN public.employees e ON e.personnel_number = v.nummer
+ON CONFLICT (employee_id) DO UPDATE
+  SET address_line = EXCLUDED.address_line, updated_at = now();
+```
+
+Niet iedere medewerker heeft een personeelsnummer; koppel die op `employees.id`.
+
+> ⚠ **Open punt: wissen bij uit dienst.** Het adres van een medewerker die uit
+> dienst gaat wordt **nog niet automatisch gewist**. `employees` krijgt dan een
+> `employed_until`, maar de rij blijft staan voor de urenexport — en het adres
+> dus ook. Tot daar een opruimregel voor is, met de hand:
+> `DELETE FROM public.employee_addresses WHERE employee_id = '<id>';`
+> Het scherm *Afstanden* heeft geen knop om een adres te verwijderen.
 
 > ⚠ **Openstaande blokkade:** apotheken zonder `addressLat`/`addressLng` kunnen
 > niet meegerekend worden. Het scherm benoemt ze per koerier en biedt handmatige

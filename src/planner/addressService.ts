@@ -2,11 +2,13 @@ import { supabase } from '../lib/supabase';
 import { CourierDistance, CourierHome } from '../types';
 
 // ── Standplaats en afstanden ──────────────────────────────────────────────
-// Het WOONADRES wordt nergens bewaard. Het gaat één keer naar de Edge Function
-// courier-distances, die het geocodeert, de route-afstanden berekent en alleen
-// die afstanden wegschrijft. Deze module bewaart het adres dus ook niet in een
-// state die ergens blijft hangen: het staat in het formulierveld en verdwijnt
-// met het scherm.
+// Het WOONADRES wordt sinds 7 oktober 2026 bewaard, in employee_addresses
+// (migratie 057). Lezen en schrijven gaan uitsluitend via courier_address_get
+// en _set; de tabel zelf staat dicht, ook voor planners. Opslaan en berekenen
+// zijn twee stappen: eerst het adres vastleggen, dan de Edge Function zonder
+// adres aanroepen, zodat die met het bewaarde rekent. Dan rekent hij met
+// precies wat er bewaard is, en niet met iets wat alleen in het invoerveld
+// stond.
 
 function requireClient() {
   if (!supabase) throw new Error('Supabase is niet geconfigureerd.');
@@ -23,7 +25,27 @@ export async function getCourierHomes(): Promise<CourierHome[]> {
     homePharmacyId: r.home_pharmacy_id,
     distances: r.distances ?? 0,
     computedAt: r.computed_at,
+    hasAddress: r.has_address === true,
   }));
+}
+
+// Het bewaarde adres, of null als er nog geen is. Een koerier zonder
+// medewerkerregel geeft een fout: dan kan er ook geen adres bij, en de melding
+// zegt waar dat op te lossen is.
+export async function getCourierAddress(courierId: string): Promise<string | null> {
+  const sb = requireClient();
+  const { data, error } = await sb.rpc('courier_address_get', { p_courier_id: courierId });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
+// Opslaan; een lege regel verwijdert het adres.
+export async function setCourierAddress(courierId: string, address: string): Promise<void> {
+  const sb = requireClient();
+  const { error } = await sb.rpc('courier_address_set', {
+    p_courier_id: courierId, p_address: address,
+  });
+  if (error) throw error;
 }
 
 export async function setHomePharmacy(courierId: string, pharmacyId: string | null): Promise<void> {
@@ -77,9 +99,14 @@ export interface DistanceRun {
 }
 
 // Adres → afstanden. De Edge Function controleert zelf of de aanroeper planner
-// is; we sturen daarvoor het sessietoken mee. Het adres gaat één keer over de
-// lijn en komt nergens terug.
-export async function computeDistances(courierId: string, address: string): Promise<DistanceRun> {
+// is; we sturen daarvoor het sessietoken mee.
+//
+// Zonder adres rekent de functie met het bewaarde adres van deze koerier — de
+// gewone route vanuit het scherm, ná courier_address_set. Met adres rekent ze
+// daar eenmalig mee en slaat ze het níét op; die vorm is er voor wie een adres
+// wil proberen zonder het vast te leggen. Het adres komt in geen van beide
+// gevallen terug in het antwoord.
+export async function computeDistances(courierId: string, address?: string): Promise<DistanceRun> {
   const sb = requireClient();
   const { data: { session } } = await sb.auth.getSession();
   if (!session) throw new Error('Je sessie is verlopen. Log opnieuw in.');
@@ -92,7 +119,7 @@ export async function computeDistances(courierId: string, address: string): Prom
       'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY as string,
       'Authorization': `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ courier_id: courierId, address }),
+    body: JSON.stringify(address === undefined ? { courier_id: courierId } : { courier_id: courierId, address }),
   });
 
   let body: any = null;

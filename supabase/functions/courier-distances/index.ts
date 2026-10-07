@@ -1,14 +1,26 @@
 // ════════════════════════════════════════════════════════════════════════
 // Greenspeed Planner — woonadres in, afstanden uit
 // ════════════════════════════════════════════════════════════════════════
-// Supabase Edge Function (Deno). Neemt een woonadres aan, geocodeert het,
-// berekent de route-afstand naar alle apotheken waar de koerier mee te maken
-// heeft, en schrijft ALLEEN die afstanden weg in courier_distances.
+// Supabase Edge Function (Deno). Geocodeert het woonadres van een koerier,
+// berekent de route-afstand naar alle apotheken waar hij mee te maken heeft, en
+// schrijft die afstanden weg in courier_distances.
 //
-// HET ADRES WORDT NERGENS BEWAARD. Niet in de database, niet in een logregel.
-// Het bestaat alleen in het geheugen van deze aanroep en in het verzoek aan de
-// geocoder. Daarom staat er hieronder ook nergens console.log van het adres of
-// van de coördinaten die eruit komen: een logregel is ook een bewaarplaats.
+// WAAR HET ADRES VANDAAN KOMT — sinds 7 oktober 2026 (migratie 057)
+//   Het adres wordt bewaard, in employee_addresses. Wordt er geen adres
+//   meegestuurd, dan leest deze functie het bewaarde adres van deze koerier zelf
+//   (als service_role; de tabel staat dicht voor iedereen behalve planners).
+//   Zo kan een afstand opnieuw berekend worden — bijvoorbeeld na een koppeling
+//   aan een nieuwe apotheek — zonder dat iemand het adres opnieuw intypt.
+//
+//   Wordt er wél een adres meegestuurd, dan rekent de functie daarmee en slaat
+//   ze het NIET op. Opslaan loopt uitsluitend via courier_address_set(): die
+//   controleert wie het doet en legt dat vast. Twee plekken die een adres kunnen
+//   wegschrijven zijn er één te veel.
+//
+// HET ADRES BLIJFT BUITEN ELKE LOGREGEL EN ELK ANTWOORD, net als de coördinaten
+// die eruit komen. Dat het adres nu in de database staat is geen reden om het
+// ook in de functielogs te zetten: die hebben een andere bewaartermijn, andere
+// lezers, en zijn niet te wissen als iemand uit dienst gaat.
 //
 // Wie mag dit? Alleen een ingelogde planner. De aanroeper stuurt zijn eigen
 // sessie mee; die wordt hier geverifieerd en tegen user_profiles.role gehouden.
@@ -92,6 +104,46 @@ async function geocode(address: string): Promise<
   return { ok: true, lat: r.geometry.location.lat, lng: r.geometry.location.lng };
 }
 
+// ── Het bewaarde adres ───────────────────────────────────────────────────
+// Via employees.user_profile_id van koerier naar medewerker, dan het adres. Elke
+// uitkomst die geen adres oplevert krijgt een melding waar de planner iets mee
+// kan; de foutteksten van de database zelf gaan alleen naar de log, en die
+// bevatten het adres niet.
+type Admin = ReturnType<typeof createClient>;
+
+async function storedAddress(admin: Admin, courierId: string): Promise<
+  { ok: true; address: string } | { ok: false; status: number; error: string }
+> {
+  const { data: emp, error: empErr } = await admin
+    .from('employees').select('id').eq('user_profile_id', courierId).maybeSingle();
+  if (empErr) {
+    console.error('[afstanden] medewerker zoeken mislukt:', empErr.message);
+    return { ok: false, status: 500, error: 'Het bewaarde adres kon niet gelezen worden.' };
+  }
+  if (!emp) {
+    return {
+      ok: false, status: 400,
+      error: 'Deze koerier heeft geen medewerkerregel, dus er is geen adres bewaard. '
+           + 'Koppel hem eerst onder Beheer → Medewerkers.',
+    };
+  }
+
+  const { data: row, error: adrErr } = await admin
+    .from('employee_addresses').select('address_line').eq('employee_id', (emp as { id: string }).id).maybeSingle();
+  if (adrErr) {
+    console.error('[afstanden] adres lezen mislukt:', adrErr.message);
+    return { ok: false, status: 500, error: 'Het bewaarde adres kon niet gelezen worden.' };
+  }
+  const line = (row as { address_line?: string } | null)?.address_line?.trim() ?? '';
+  if (!line) {
+    return {
+      ok: false, status: 400,
+      error: 'Van deze koerier is nog geen woonadres bekend. Vul het in onder Beheer → Afstanden en bereken opnieuw.',
+    };
+  }
+  return { ok: true, address: line };
+}
+
 // ── Route-afstanden ──────────────────────────────────────────────────────
 // Geeft per bestemming de afstand in kilometers, of null als deze rit niet
 // berekend kon worden.
@@ -119,7 +171,9 @@ async function routeDistances(
           : null);
       }
     } catch (e) {
-      console.error('[afstanden] Distance Matrix mislukt:', e instanceof Error ? e.message : String(e));
+      // e.name en niet e.message: een mislukte fetch zet in Deno de volledige URL
+      // in de melding, en daar staan de coördinaten van het huis in.
+      console.error('[afstanden] Distance Matrix mislukt:', e instanceof Error ? e.name : 'onbekende fout');
       for (let j = 0; j < slice.length; j++) out.push(null);
     }
   }
@@ -165,15 +219,28 @@ Deno.serve(async (req) => {
     return json({ error: 'Onleesbare aanvraag.' }, 400);
   }
   const courierId = typeof body.courier_id === 'string' ? body.courier_id : '';
-  const address   = typeof body.address === 'string' ? body.address.trim() : '';
+  // Meegestuurd is een eenmalige berekening met dit adres; leeg of afwezig
+  // betekent: neem het bewaarde. Een te kort adres is een invoerfout en geen
+  // verzoek om het bewaarde te gebruiken — dan zou een tikfout stilletjes met
+  // een ander adres rekenen dan er in beeld stond.
+  const given     = typeof body.address === 'string' ? body.address.trim() : '';
   if (!courierId) return json({ error: 'Geen koerier opgegeven.' }, 400);
-  if (address.length < 6) return json({ error: 'Vul een volledig adres in (straat, huisnummer, postcode).' }, 400);
+  if (given !== '' && given.length < 6) {
+    return json({ error: 'Vul een volledig adres in (straat, huisnummer, postcode).' }, 400);
+  }
 
   const { data: courier } = await admin
     .from('user_profiles').select('id, name, role, home_pharmacy_id')
     .eq('id', courierId).single();
   if (!courier || courier.role !== 'courier') {
     return json({ error: 'Onbekende koerier.' }, 404);
+  }
+
+  let address = given;
+  if (!address) {
+    const stored = await storedAddress(admin, courierId);
+    if (!stored.ok) return json({ error: stored.error }, stored.status);
+    address = stored.address;
   }
 
   // ── 3. Welke apotheken ──────────────────────────────────────────────────
@@ -220,7 +287,9 @@ Deno.serve(async (req) => {
     if (!g.ok) return json({ error: g.reason }, 400);
     home = { lat: g.lat, lng: g.lng };
   } catch (e) {
-    console.error('[afstanden] geocoder onbereikbaar:', e instanceof Error ? e.message : String(e));
+    // e.name en niet e.message: een mislukte fetch zet in Deno de volledige URL
+    // in de melding — met het adres én de Google-sleutel erin.
+    console.error('[afstanden] geocoder onbereikbaar:', e instanceof Error ? e.name : 'onbekende fout');
     return json({ error: 'De geocoder is niet bereikbaar. Probeer het later opnieuw.' }, 502);
   }
 

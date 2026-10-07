@@ -1,22 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Calculator, Check, Home, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Calculator, Check, Home, ListChecks, X } from 'lucide-react';
 import { CourierDistance, CourierHome, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
 import {
-  DistanceRun, SOURCE_LABELS, computeDistances, getCourierHomes, getDistances,
-  setDistanceManual, setHomePharmacy,
+  DistanceRun, SOURCE_LABELS, computeDistances, getCourierAddress, getCourierHomes, getDistances,
+  setCourierAddress, setDistanceManual, setHomePharmacy,
 } from './addressService';
 
 interface Props {
   onClose: () => void;
 }
 
+// Eén regel uit de afsluiting van "Alle afstanden berekenen".
+interface BulkOutcome {
+  courierName: string;
+  error?: string;      // de berekening mislukte
+  skipped?: string[];  // gelukt, maar apotheken zonder coördinaten overgeslagen
+}
+
 // Beheerscherm voor de standplaats en de afstanden per koerier (migratie 018).
 //
-// Het woonadres wordt HIER ingevoerd en NERGENS bewaard. Het gaat één keer naar
-// de Edge Function, die het omzet in afstanden; wat terugkomt zijn kilometers per
-// apotheek. Het veld wordt na een geslaagde berekening leeggemaakt, zodat het
-// adres ook niet in een openstaand scherm blijft staan.
+// Het woonadres wordt sinds 7 oktober 2026 BEWAARD (migratie 057), alleen
+// zichtbaar voor planners. Het staat in het invoerveld zodra een koerier wordt
+// opengeklapt, zodat een planner kan zien wat er gebruikt wordt en een tikfout
+// kan verbeteren. Berekenen legt een gewijzigd adres eerst vast en laat de Edge
+// Function daarna met het bewaarde rekenen — zo kan wat er in de database staat
+// nooit afwijken van waarmee de afstanden zijn berekend.
 export default function CourierAddresses({ onClose }: Props) {
   const [homes, setHomes] = useState<CourierHome[]>([]);
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
@@ -24,12 +33,23 @@ export default function CourierAddresses({ onClose }: Props) {
   const [error, setError] = useState('');
 
   const [openId, setOpenId] = useState<string | null>(null);
+  // Welke koerier er NU open is, ook binnen een lopende await. Klapt de planner
+  // snel een andere open, dan mag het adres van de vorige niet alsnog in het
+  // veld van de nieuwe terechtkomen.
+  const openRef = useRef<string | null>(null);
   const [address, setAddress] = useState('');
+  // Wat er bewaard staat, om te weten of het veld gewijzigd is.
+  const [savedAddress, setSavedAddress] = useState('');
+  const [addressLoading, setAddressLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [run, setRun] = useState<DistanceRun | null>(null);
   const [existing, setExisting] = useState<CourierDistance[]>([]);
   const [manual, setManual] = useState<Record<string, string>>({});
+
+  const [bulk, setBulk] = useState<{ at: number; total: number; current: string } | null>(null);
+  const [bulkOutcome, setBulkOutcome] = useState<{ total: number; outcomes: BulkOutcome[] } | null>(null);
+  const bulkBusy = bulk !== null;
 
   async function reload() {
     setLoading(true);
@@ -51,19 +71,30 @@ export default function CourierAddresses({ onClose }: Props) {
   );
 
   const withoutHome = useMemo(() => homes.filter((h) => !h.homePharmacyId), [homes]);
+  const withAddress = useMemo(() => homes.filter((h) => h.hasAddress), [homes]);
 
   async function openCourier(courierId: string) {
-    if (openId === courierId) { setOpenId(null); return; }
+    if (openId === courierId) { setOpenId(null); openRef.current = null; return; }
     setOpenId(courierId);
+    openRef.current = courierId;
     setAddress('');
+    setSavedAddress('');
     setRun(null);
     setManual({});
     setRowError((m) => ({ ...m, [courierId]: '' }));
-    try {
-      setExisting(await getDistances(courierId));
-    } catch {
-      setExisting([]);
+    setAddressLoading(true);
+
+    const [dist, adr] = await Promise.allSettled([getDistances(courierId), getCourierAddress(courierId)]);
+    if (openRef.current !== courierId) return;
+
+    setExisting(dist.status === 'fulfilled' ? dist.value : []);
+    if (adr.status === 'fulfilled') {
+      setAddress(adr.value ?? '');
+      setSavedAddress(adr.value ?? '');
+    } else {
+      setRowError((m) => ({ ...m, [courierId]: adr.reason?.message ?? 'Het adres kon niet opgehaald worden.' }));
     }
+    setAddressLoading(false);
   }
 
   async function saveHome(courierId: string, pharmacyId: string) {
@@ -88,15 +119,57 @@ export default function CourierAddresses({ onClose }: Props) {
     setBusyId(courierId);
     setRowError((m) => ({ ...m, [courierId]: '' }));
     try {
-      const result = await computeDistances(courierId, value);
+      // Eerst vastleggen, dan rekenen met wat er bewaard staat. Andersom kan een
+      // berekening slagen met een adres dat daarna niet opgeslagen blijkt — en
+      // dan rekent de volgende herberekening met het oude.
+      if (value !== savedAddress.trim()) {
+        await setCourierAddress(courierId, value);
+        setSavedAddress(value);
+        setAddress(value);
+      }
+      const result = await computeDistances(courierId);
       setRun(result);
-      setAddress('');            // het adres blijft niet in beeld staan
       setExisting(await getDistances(courierId));
       await reload();
     } catch (e: any) {
       setRowError((m) => ({ ...m, [courierId]: e?.message ?? 'Berekenen mislukt.' }));
     } finally {
       setBusyId(null);
+    }
+  }
+
+  // Alle koeriers met een bewaard adres, één voor één. Niet parallel: de
+  // geocoder en de Distance Matrix hebben limieten per seconde, en zestien
+  // tegelijk levert zestien halve fouten op in plaats van één nette rij.
+  //
+  // Een fout bij één koerier stopt de rest niet. Wie na een nieuwe apotheek alle
+  // afstanden ververst wil weten bij wie het misging, niet dat het bij de derde
+  // ophield.
+  async function calculateAll() {
+    const targets = withAddress;
+    if (targets.length === 0) return;
+    setBulkOutcome(null);
+    const outcomes: BulkOutcome[] = [];
+
+    for (let i = 0; i < targets.length; i++) {
+      const h = targets[i];
+      setBulk({ at: i + 1, total: targets.length, current: h.courierName });
+      try {
+        const result = await computeDistances(h.courierId);
+        if (result.skipped.length > 0) {
+          outcomes.push({ courierName: h.courierName, skipped: result.skipped.map((s) => s.name) });
+        }
+      } catch (e: any) {
+        outcomes.push({ courierName: h.courierName, error: e?.message ?? 'Berekenen mislukt.' });
+      }
+    }
+
+    setBulk(null);
+    setBulkOutcome({ total: targets.length, outcomes });
+    await reload();
+    if (openRef.current) {
+      const id = openRef.current;
+      getDistances(id).then((d) => { if (openRef.current === id) setExisting(d); }).catch(() => {});
     }
   }
 
@@ -119,6 +192,9 @@ export default function CourierAddresses({ onClose }: Props) {
     }
   }
 
+  const failed = bulkOutcome?.outcomes.filter((o) => o.error) ?? [];
+  const partial = bulkOutcome?.outcomes.filter((o) => !o.error) ?? [];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
@@ -136,8 +212,44 @@ export default function CourierAddresses({ onClose }: Props) {
           <p className="text-sm text-slate-600">
             De standplaats bepaalt de reiskostenregel: naar de eigen standplaats geldt de drempel,
             naar een andere apotheek wordt de volle afstand vergoed. Het woonadres wordt{' '}
-            <strong>niet opgeslagen</strong> — er komen alleen kilometers terug.
+            <strong>bewaard</strong> zodat afstanden opnieuw berekend kunnen worden zonder het opnieuw
+            in te typen — alleen planners kunnen het zien.
           </p>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={calculateAll} disabled={bulkBusy || busyId !== null || withAddress.length === 0}
+              title={withAddress.length === 0 ? 'Nog van geen enkele koerier een adres bewaard' : undefined}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
+            >
+              <ListChecks size={15} /> Alle afstanden berekenen
+            </button>
+            <span className="text-sm text-slate-500">
+              {bulk
+                ? `${bulk.at} van ${bulk.total} — ${bulk.current}…`
+                : `${withAddress.length} van ${homes.length} koeriers hebben een bewaard adres`}
+            </span>
+          </div>
+
+          {bulkOutcome && (
+            <div className={`rounded-lg border text-sm p-3 space-y-1 ${
+              failed.length > 0 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+              <p className="font-medium inline-flex items-center gap-1">
+                {failed.length === 0 && <Check size={15} />}
+                {bulkOutcome.total - failed.length} van {bulkOutcome.total} koeriers berekend
+                {failed.length > 0 && `, bij ${failed.length} ging het mis`}
+              </p>
+              {failed.map((o) => (
+                <p key={o.courierName}><strong>{o.courierName}</strong>: {o.error}</p>
+              ))}
+              {partial.map((o) => (
+                <p key={o.courierName} className="text-amber-700">
+                  <strong>{o.courierName}</strong>: overgeslagen omdat de apotheek geen coördinaten heeft —{' '}
+                  {o.skipped!.join(', ')}
+                </p>
+              ))}
+            </div>
+          )}
 
           {!loading && withoutHome.length > 0 && (
             <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm p-3">
@@ -152,7 +264,7 @@ export default function CourierAddresses({ onClose }: Props) {
 
           <ul className="divide-y divide-slate-100">
             {homes.map((h) => {
-              const busy = busyId === h.courierId;
+              const busy = busyId === h.courierId || bulkBusy;
               const open = openId === h.courierId;
               const err = rowError[h.courierId];
 
@@ -163,6 +275,9 @@ export default function CourierAddresses({ onClose }: Props) {
                       <span className="text-sm font-medium text-slate-800">{h.courierName}</span>
                       <span className="ml-2 text-xs text-slate-500">
                         {h.distances === 0 ? 'geen afstanden' : `${h.distances} afstand${h.distances === 1 ? '' : 'en'}`}
+                      </span>
+                      <span className={`ml-2 text-xs ${h.hasAddress ? 'text-slate-500' : 'text-amber-700'}`}>
+                        · {h.hasAddress ? 'adres bekend' : 'geen adres'}
                       </span>
                     </div>
 
@@ -191,26 +306,27 @@ export default function CourierAddresses({ onClose }: Props) {
                     <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3 space-y-3">
                       <div>
                         <label className="block text-xs text-slate-500 mb-1">
-                          Woonadres van {h.courierName} — wordt niet bewaard
+                          Woonadres van {h.courierName} — wordt bewaard, alleen zichtbaar voor planners
                         </label>
                         <div className="flex gap-2">
                           <input
-                            type="text" value={address} disabled={busy}
-                            placeholder="Straat 12, 1234 AB Plaats"
+                            type="text" value={address} disabled={busy || addressLoading}
+                            placeholder={addressLoading ? 'Adres ophalen…' : 'Straat 12, 1234 AB Plaats'}
                             onChange={(e) => setAddress(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') calculate(h.courierId); }}
                             className="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:opacity-60"
                           />
                           <button
-                            onClick={() => calculate(h.courierId)} disabled={busy}
+                            onClick={() => calculate(h.courierId)} disabled={busy || addressLoading}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-lg font-medium"
                           >
-                            <Calculator size={15} /> {busy ? 'Bezig…' : 'Berekenen'}
+                            <Calculator size={15} /> {busyId === h.courierId ? 'Bezig…' : 'Berekenen'}
                           </button>
                         </div>
                         <p className="text-xs text-slate-400 mt-1">
                           Er worden meteen afstanden berekend naar álle apotheken waar deze koerier aan
-                          gekoppeld is, zodat ook diensten buiten de standplaats kloppen.
+                          gekoppeld is, zodat ook diensten buiten de standplaats kloppen. Een gewijzigd adres
+                          wordt eerst opgeslagen.
                         </p>
                       </div>
 

@@ -337,6 +337,9 @@ export interface CourierHome {
   homePharmacyId: string | null;
   distances: number;              // aantal apotheken met een bekende afstand
   computedAt: string | null;
+  // Is er een woonadres bewaard (migratie 057)? Alleen óf, nooit het adres zelf:
+  // dit overzicht laadt alle koeriers tegelijk.
+  hasAddress: boolean;
 }
 
 // Eén afstand uit courier_distances. Het woonadres staat er bewust niet bij:
