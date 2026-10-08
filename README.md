@@ -880,15 +880,23 @@ ANWB-getal af, voer het dan handmatig in: het komt in `courier_distances` met
 `source = 'manual'`, zodat altijd te zien is welk getal niet uit een berekening
 komt.
 
-> ⚠ **Twee beperkingen bij handmatige getallen.**
-> * In *Afstanden* kan dat alleen voor een apotheek zonder coördinaten. Voor een
->   apotheek waarvoor wél een route is berekend gaat het via SQL:
->   `UPDATE public.courier_distances SET distance_km = <km>, source = 'manual',
->   computed_at = now() WHERE courier_id = '<koerier>' AND pharmacy_id = '<apotheek>';`
-> * **Een herberekening overschrijft een handmatig getal.** De functie schrijft bij
->   elke berekening alle apotheken van de koerier opnieuw, ook die met `source =
->   'manual'`. Wie na het invoeren van ANWB-getallen op *Berekenen* of *Alle
->   afstanden berekenen* klikt, is ze kwijt.
+**Handmatig gaat voor.** Een afstand met `source = 'manual'` blijft bij elke
+(her)berekening staan, ook bij *Alle afstanden berekenen*. De functie berekent
+hem wel, en zet het getal van Google ernaast in het antwoord (`kept_manual`,
+`computed_km`), zodat een groot verschil opvalt. In *Afstanden* staat zo'n
+afstand als *handmatig (ANWB)*, met het getal van Google eronder na een
+berekening; *Alle afstanden berekenen* meldt na afloop hoeveel handmatige
+afstanden er zijn blijven staan.
+
+**Invoeren en terugzetten.** In *Afstanden* heeft elke apotheek van de koerier een
+invoerveld — ook een apotheek zonder afstand, en ook als geen enkele apotheek van
+de koerier coördinaten heeft (zo stond het bij BENU Apotheek Stadsweiden: de
+berekening gaf een fout en er was nergens een veld). *Terugzetten* haalt een
+handmatige afstand weg en zet de berekende waarde ervoor in de plaats: de Edge
+Function rekent opnieuw en schrijft voor die ene apotheek de berekende afstand
+weg (`reset_manual`). Heeft de apotheek geen coördinaten, dan is er geen
+berekende waarde om naar terug te gaan en blijft de handmatige staan — liever dat
+dan een declaratie die onvolledig wordt.
 
 ### Onkosten
 

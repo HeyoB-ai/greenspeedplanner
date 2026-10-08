@@ -88,8 +88,13 @@ export async function setDistanceManual(
 export interface DistanceResult {
   pharmacy_id: string;
   pharmacy_name: string;
-  distance_km: number;
+  distance_km: number;            // wat er nu in de database staat
   source: 'route' | 'fallback' | 'manual';
+  // Een handmatige (ANWB-)afstand die bij deze berekening is blijven staan, met
+  // wat Google berekende ernaast — zodat het verschil zichtbaar is.
+  kept_manual?: boolean;
+  computed_km?: number;
+  computed_source?: 'route' | 'fallback';
 }
 
 export interface DistanceRun {
@@ -100,6 +105,20 @@ export interface DistanceRun {
   // bijvoorbeeld een sleutel zonder Routes API. Tot oktober 2026 kwam die nergens
   // terug, en werd elke afstand ongemerkt een schatting.
   routeError: string | null;
+  // Hoeveel handmatige afstanden er na deze berekening nog staan.
+  keptManual: number;
+}
+
+// De apotheken van een koerier, zoals de Edge Function ze ook kiest:
+// courier_pharmacy_access, plus de standplaats (die geeft het scherm zelf mee).
+// Los van de berekening opgehaald, zodat er ook een invoerveld is als de functie
+// niets kan berekenen — bijvoorbeeld omdat geen enkele apotheek coördinaten heeft.
+export async function getCourierPharmacyIds(courierId: string): Promise<string[]> {
+  const sb = requireClient();
+  const { data, error } = await sb
+    .from('courier_pharmacy_access').select('pharmacy_id').eq('courier_id', courierId);
+  if (error) throw error;
+  return (data ?? []).map((r: any) => r.pharmacy_id as string);
 }
 
 // Adres → afstanden. De Edge Function controleert zelf of de aanroeper planner
@@ -110,7 +129,12 @@ export interface DistanceRun {
 // daar eenmalig mee en slaat ze het níét op; die vorm is er voor wie een adres
 // wil proberen zonder het vast te leggen. Het adres komt in geen van beide
 // gevallen terug in het antwoord.
-export async function computeDistances(courierId: string, address?: string): Promise<DistanceRun> {
+//
+// Handmatige afstanden blijven staan; de ANWB is volgens de cao leidend. Alleen
+// de apotheken in resetManual krijgen weer de berekende waarde.
+export async function computeDistances(
+  courierId: string, address?: string, resetManual?: string[],
+): Promise<DistanceRun> {
   const sb = requireClient();
   const { data: { session } } = await sb.auth.getSession();
   if (!session) throw new Error('Je sessie is verlopen. Log opnieuw in.');
@@ -123,7 +147,11 @@ export async function computeDistances(courierId: string, address?: string): Pro
       'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY as string,
       'Authorization': `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify(address === undefined ? { courier_id: courierId } : { courier_id: courierId, address }),
+    body: JSON.stringify({
+      courier_id: courierId,
+      ...(address !== undefined ? { address } : {}),
+      ...(resetManual && resetManual.length > 0 ? { reset_manual: resetManual } : {}),
+    }),
   });
 
   let body: any = null;
@@ -135,13 +163,14 @@ export async function computeDistances(courierId: string, address?: string): Pro
     fallbacks: body?.fallbacks ?? 0,
     skipped: body?.skipped ?? [],
     routeError: body?.route_error ?? null,
+    keptManual: body?.kept_manual ?? 0,
   };
 }
 
 export const SOURCE_LABELS: Record<string, string> = {
   route:    'route',
   fallback: 'geschat',
-  manual:   'handmatig',
+  manual:   'handmatig (ANWB)',
 };
 
 // Wat een fallback is, voluit. Staat op één plek zodat de melding na een

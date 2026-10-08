@@ -37,6 +37,13 @@
 // koerier voor dezelfde rit een andere vergoeding afhankelijk van het uur waarop
 // iemand op Berekenen klikte.
 //
+// HANDMATIG GAAT VOOR. Volgens de cao is de ANWB-routeplanner leidend. Een
+// afstand die een planner met de hand heeft ingevoerd (source = 'manual') wordt
+// daarom bij een (her)berekening NIET overschreven. Hij wordt wel berekend, en
+// dat getal gaat mee in het antwoord, zodat het verschil met de ANWB zichtbaar
+// is. Alleen als de planner er uitdrukkelijk om vraagt — reset_manual, de knop
+// "Terugzetten" — gaat de berekende waarde eroverheen.
+//
 // Lukt de routeberekening niet, dan volgt een hemelsbrede benadering met
 // omrijfactor en die rij krijgt source = 'fallback'. Dat gebeurde tot oktober 2026
 // STIL: de legacy Distance Matrix API gaf REQUEST_DENIED — hij is voor nieuwe
@@ -278,7 +285,7 @@ Deno.serve(async (req) => {
   }
 
   // ── 2. Wat er gevraagd wordt ────────────────────────────────────────────
-  let body: { courier_id?: unknown; address?: unknown };
+  let body: { courier_id?: unknown; address?: unknown; reset_manual?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -294,6 +301,13 @@ Deno.serve(async (req) => {
   if (given !== '' && given.length < 6) {
     return json({ error: 'Vul een volledig adres in (straat, huisnummer, postcode).' }, 400);
   }
+  // Apotheken waarvan de planner de handmatige afstand wil terugzetten naar de
+  // berekende. Alleen dan mag een handmatige rij overschreven worden.
+  const reset = new Set<string>(
+    Array.isArray(body.reset_manual)
+      ? body.reset_manual.filter((x): x is string => typeof x === 'string')
+      : [],
+  );
 
   const { data: courier } = await admin
     .from('user_profiles').select('id, name, role, home_pharmacy_id')
@@ -333,7 +347,15 @@ Deno.serve(async (req) => {
     if (p.addressLat == null || p.addressLng == null) {
       // De bekende blokkade: een apotheek zonder adresgegevens is geen fout van
       // deze koerier. Overslaan, benoemen, en de rest gewoon berekenen.
-      skipped.push({ id: p.id, name: p.name, reason: 'apotheek heeft geen coördinaten' });
+      skipped.push({
+        id: p.id, name: p.name,
+        reason: reset.has(p.id)
+          // Terugzetten kan hier niet: er is geen berekende waarde om naar terug
+          // te gaan. Dan blijft de handmatige afstand liever staan dan dat hij
+          // verdwijnt en de declaratie onvolledig wordt.
+          ? 'apotheek heeft geen coördinaten — de handmatige afstand blijft staan'
+          : 'apotheek heeft geen coördinaten',
+      });
       continue;
     }
     targets.push({ id: p.id, name: p.name, lat: p.addressLat, lng: p.addressLng });
@@ -345,6 +367,20 @@ Deno.serve(async (req) => {
       skipped,
     }, 400);
   }
+
+  // Wat er nu staat. Handmatige rijen blijven staan, tenzij erom gevraagd is.
+  const { data: existingRows, error: exErr } = await admin
+    .from('courier_distances').select('pharmacy_id, distance_km, source').eq('courier_id', courierId);
+  if (exErr) {
+    console.error('[afstanden] bestaande afstanden lezen mislukt:', exErr.message);
+    return json({ error: 'De bestaande afstanden konden niet gelezen worden.' }, 500);
+  }
+  const existingManual = new Map<string, number>(
+    ((existingRows ?? []) as Array<{ pharmacy_id: string; distance_km: number; source: string }>)
+      .filter((r) => r.source === 'manual')
+      .map((r) => [r.pharmacy_id, Number(r.distance_km)]),
+  );
+  const keepManual = (id: string) => existingManual.has(id) && !reset.has(id);
 
   // ── 4. Adres → punt ─────────────────────────────────────────────────────
   let home: { lat: number; lng: number };
@@ -362,7 +398,9 @@ Deno.serve(async (req) => {
   // ── 5. Punt → afstanden → database ──────────────────────────────────────
   const routed = await routeDistances(home, targets);
 
-  const rows = targets.map((p, i) => {
+  // Ook voor de handmatige apotheken berekend: dat getal is nodig om naast de
+  // ANWB-afstand te zetten. Alleen niet weggeschreven.
+  const computed = targets.map((p, i) => {
     const km = routed.km[i];
     return {
       courier_id: courierId,
@@ -372,15 +410,23 @@ Deno.serve(async (req) => {
       computed_at: new Date().toISOString(),
     };
   });
+  const rows = computed.filter((r) => !keepManual(r.pharmacy_id));
 
-  const { error: upErr } = await admin
-    .from('courier_distances')
-    .upsert(rows, { onConflict: 'courier_id,pharmacy_id' });
+  if (rows.length > 0) {
+    const { error: upErr } = await admin
+      .from('courier_distances')
+      .upsert(rows, { onConflict: 'courier_id,pharmacy_id' });
 
-  if (upErr) {
-    console.error('[afstanden] wegschrijven mislukt:', upErr.message);
-    return json({ error: 'De afstanden konden niet opgeslagen worden.' }, 500);
+    if (upErr) {
+      console.error('[afstanden] wegschrijven mislukt:', upErr.message);
+      return json({ error: 'De afstanden konden niet opgeslagen worden.' }, 500);
+    }
   }
+
+  // Hoeveel handmatige afstanden er na deze berekening nog staan — ook die bij
+  // een apotheek zonder coördinaten, waar niets te berekenen viel.
+  const written = new Set(rows.map((r) => r.pharmacy_id));
+  const keptManual = [...existingManual.keys()].filter((id) => !written.has(id)).length;
 
   // Het adres en de coördinaten gaan hier bewust NIET in het antwoord: de planner
   // heeft ze niet nodig en ze zouden alsnog in een browserlog of screenshot
@@ -389,13 +435,26 @@ Deno.serve(async (req) => {
   return json({
     ok: true,
     courier: courier.name,
-    distances: rows.map((r) => ({
-      pharmacy_id: r.pharmacy_id,
-      pharmacy_name: byId.get(r.pharmacy_id) ?? r.pharmacy_id,
-      distance_km: r.distance_km,
-      source: r.source,
-    })).sort((a, b) => a.pharmacy_name.localeCompare(b.pharmacy_name, 'nl')),
+    // Per apotheek wat er nu in de database staat. Bij een handmatige afstand
+    // die is blijven staan: kept_manual, en wat Google berekende ernaast.
+    distances: computed.map((r) => (keepManual(r.pharmacy_id)
+      ? {
+          pharmacy_id: r.pharmacy_id,
+          pharmacy_name: byId.get(r.pharmacy_id) ?? r.pharmacy_id,
+          distance_km: existingManual.get(r.pharmacy_id)!,
+          source: 'manual',
+          kept_manual: true,
+          computed_km: r.distance_km,
+          computed_source: r.source,
+        }
+      : {
+          pharmacy_id: r.pharmacy_id,
+          pharmacy_name: byId.get(r.pharmacy_id) ?? r.pharmacy_id,
+          distance_km: r.distance_km,
+          source: r.source,
+        })).sort((a, b) => a.pharmacy_name.localeCompare(b.pharmacy_name, 'nl')),
     fallbacks: rows.filter((r) => r.source === 'fallback').length,
+    kept_manual: keptManual,
     // De reden van Google als de routeberekening als geheel mislukte. Zonder dit
     // veld werd een afgewezen aanvraag een stille schatting.
     route_error: routed.error,
