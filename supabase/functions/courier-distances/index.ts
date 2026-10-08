@@ -27,11 +27,22 @@
 // Zonder die controle zou iedereen met de anon-key afstanden kunnen overschrijven
 // — en dus vergoedingen kunnen sturen.
 //
-// AFSTAND = ENKELE REIS over de werkelijke route (Google Distance Matrix,
-// mode=driving). Ook voor fietsdiensten: de vergoeding gaat over de gereden
-// kilometers tussen twee punten, en de rijafstand is de maat die iedereen kan
-// nalopen. Lukt de routeberekening niet, dan volgt een hemelsbrede benadering
-// met omrijfactor en die rij krijgt source = 'fallback' — zichtbaar minder hard.
+// AFSTAND = ENKELE REIS over de werkelijke route (Google Routes API,
+// computeRouteMatrix, travelMode DRIVE). Ook voor fietsdiensten: de vergoeding
+// gaat over de gereden kilometers tussen twee punten, en de rijafstand is de maat
+// die iedereen kan nalopen.
+//
+// routingPreference TRAFFIC_UNAWARE: de afstand moet reproduceerbaar zijn. Met
+// verkeer erin kiest Google bij file een andere route, en dan krijgt dezelfde
+// koerier voor dezelfde rit een andere vergoeding afhankelijk van het uur waarop
+// iemand op Berekenen klikte.
+//
+// Lukt de routeberekening niet, dan volgt een hemelsbrede benadering met
+// omrijfactor en die rij krijgt source = 'fallback'. Dat gebeurde tot oktober 2026
+// STIL: de legacy Distance Matrix API gaf REQUEST_DENIED — hij is voor nieuwe
+// Google-projecten niet meer aan te zetten — en elke afstand werd ongemerkt een
+// schatting. Daarom gaat de reden van Google nu mee in het antwoord (route_error)
+// en in de log.
 // ════════════════════════════════════════════════════════════════════════
 
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -46,8 +57,17 @@ const ORIGIN           = Deno.env.get('DECLARATION_ORIGIN') ?? '*';
 // als de routeberekening niets oplevert.
 const DETOUR_FACTOR = 1.35;
 
-// Distance Matrix accepteert 25 bestemmingen per aanroep.
+// Per aanroep naar de Routes API. De limiet is 625 elementen (origins x
+// destinations) bij latLng-punten; met één herkomst zouden alle apotheken in één
+// keer kunnen. Kleiner houden betekent dat een fout bij Google hooguit een deel
+// van de afstanden een schatting maakt, en niet alles.
 const CHUNK = 25;
+
+const ROUTES_URL = 'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix';
+// Zonder field mask weigert computeRouteMatrix. Alleen wat we gebruiken: minder
+// data over de lijn, en geen duur die suggereert dat we hem ergens voor nodig
+// hebben.
+const ROUTES_FIELD_MASK = 'originIndex,destinationIndex,distanceMeters,condition,status';
 
 const ACCEPTED_LOCATION_TYPES = ['ROOFTOP', 'RANGE_INTERPOLATED'];
 
@@ -145,40 +165,86 @@ async function storedAddress(admin: Admin, courierId: string): Promise<
 }
 
 // ── Route-afstanden ──────────────────────────────────────────────────────
-// Geeft per bestemming de afstand in kilometers, of null als deze rit niet
-// berekend kon worden.
+// Een foutmelding van Google gaat naar de log én naar de planner. Zo'n melding
+// kan een waarde uit het verzoek herhalen — bij een ongeldig verzoek bijvoorbeeld
+// "Invalid value at 'origins[0]...latitude', 52.27…". Getallen die op een
+// coördinaat lijken gaan er daarom uit, en de lengte is begrensd.
+function scrub(message: string): string {
+  return message.replace(/-?\d{1,3}\.\d{3,}/g, '…').slice(0, 300);
+}
+
+const waypoint = (p: { lat: number; lng: number }) =>
+  ({ waypoint: { location: { latLng: { latitude: p.lat, longitude: p.lng } } } });
+
+// Geeft per bestemming de afstand in kilometers (null = geen route), plus de
+// reden van Google als de aanvraag als geheel mislukte. Een losse bestemming
+// zonder route is geen aanvraagfout; dat kan gewoon zo zijn.
 async function routeDistances(
   origin: { lat: number; lng: number }, targets: Pharmacy[],
-): Promise<(number | null)[]> {
-  const out: (number | null)[] = [];
+): Promise<{ km: (number | null)[]; error: string | null }> {
+  const km: (number | null)[] = new Array(targets.length).fill(null);
+  let error: string | null = null;
 
   for (let i = 0; i < targets.length; i += CHUNK) {
     const slice = targets.slice(i, i + CHUNK);
-    const dest = slice.map((p) => `${p.lat},${p.lng}`).join('|');
-    const url = 'https://maps.googleapis.com/maps/api/distancematrix/json'
-      + `?origins=${origin.lat},${origin.lng}`
-      + `&destinations=${encodeURIComponent(dest)}`
-      + `&mode=driving&units=metric&region=nl&key=${GOOGLE_KEY}`;
 
     try {
-      const res = await fetch(url);
-      const data = await res.json();
-      const elements = data.status === 'OK' ? (data.rows?.[0]?.elements ?? []) : [];
-      for (let j = 0; j < slice.length; j++) {
-        const el = elements[j];
-        out.push(el?.status === 'OK' && el?.distance?.value != null
-          ? el.distance.value / 1000
-          : null);
+      // De sleutel in de header en niet in de URL: een URL komt in logregels en
+      // foutmeldingen terecht, een header niet.
+      const res = await fetch(ROUTES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': GOOGLE_KEY,
+          'X-Goog-FieldMask': ROUTES_FIELD_MASK,
+        },
+        body: JSON.stringify({
+          origins: [waypoint(origin)],
+          destinations: slice.map(waypoint),
+          travelMode: 'DRIVE',
+          routingPreference: 'TRAFFIC_UNAWARE',
+        }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !Array.isArray(data)) {
+        const status = String(data?.error?.status ?? `HTTP ${res.status}`);
+        const message = scrub(String(data?.error?.message ?? 'onleesbaar antwoord'));
+        console.error('[afstanden] Routes API weigerde de aanvraag:', status, message);
+        error ??= `${status}: ${message}`;
+        continue;
+      }
+
+      // Koppelen via destinationIndex, niet via de volgorde: Google levert de
+      // elementen in de volgorde waarin ze klaar zijn. Een ontbrekende index is
+      // 0 — Google's JSON laat standaardwaarden soms weg.
+      let elementErrors = 0;
+      let firstElementError: string | null = null;
+      for (const el of data) {
+        const j = Number(el?.destinationIndex ?? 0);
+        if (!Number.isInteger(j) || j < 0 || j >= slice.length) continue;
+        if (el?.status?.code) {
+          elementErrors++;
+          firstElementError ??= `${el.status.code}: ${scrub(String(el.status.message ?? ''))}`;
+          continue;
+        }
+        if (el?.condition === 'ROUTE_EXISTS' && el?.distanceMeters != null) {
+          km[i + j] = Number(el.distanceMeters) / 1000;
+        }
+      }
+      if (elementErrors > 0) {
+        console.error(`[afstanden] Routes API: ${elementErrors} bestemming(en) met een foutstatus, eerste:`,
+          firstElementError);
       }
     } catch (e) {
-      // e.name en niet e.message: een mislukte fetch zet in Deno de volledige URL
-      // in de melding, en daar staan de coördinaten van het huis in.
-      console.error('[afstanden] Distance Matrix mislukt:', e instanceof Error ? e.name : 'onbekende fout');
-      for (let j = 0; j < slice.length; j++) out.push(null);
+      // e.name en niet e.message, om dezelfde reden als bij de geocoder: een
+      // mislukte fetch zet in Deno de URL in de melding.
+      console.error('[afstanden] Routes API onbereikbaar:', e instanceof Error ? e.name : 'onbekende fout');
+      error ??= 'De Routes API van Google was niet bereikbaar.';
     }
   }
 
-  return out;
+  return { km, error };
 }
 
 Deno.serve(async (req) => {
@@ -297,7 +363,7 @@ Deno.serve(async (req) => {
   const routed = await routeDistances(home, targets);
 
   const rows = targets.map((p, i) => {
-    const km = routed[i];
+    const km = routed.km[i];
     return {
       courier_id: courierId,
       pharmacy_id: p.id,
@@ -330,6 +396,9 @@ Deno.serve(async (req) => {
       source: r.source,
     })).sort((a, b) => a.pharmacy_name.localeCompare(b.pharmacy_name, 'nl')),
     fallbacks: rows.filter((r) => r.source === 'fallback').length,
+    // De reden van Google als de routeberekening als geheel mislukte. Zonder dit
+    // veld werd een afgewezen aanvraag een stille schatting.
+    route_error: routed.error,
     skipped,
   }, 200);
 });

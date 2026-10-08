@@ -3,8 +3,8 @@ import { AlertTriangle, Calculator, Check, Home, ListChecks, X } from 'lucide-re
 import { CourierDistance, CourierHome, Pharmacy } from '../types';
 import { getPharmacies } from './plannerService';
 import {
-  DistanceRun, SOURCE_LABELS, computeDistances, getCourierAddress, getCourierHomes, getDistances,
-  setCourierAddress, setDistanceManual, setHomePharmacy,
+  DistanceRun, FALLBACK_TEXT, SOURCE_LABELS, computeDistances, getCourierAddress, getCourierHomes,
+  getDistances, setCourierAddress, setDistanceManual, setHomePharmacy,
 } from './addressService';
 
 interface Props {
@@ -14,8 +14,17 @@ interface Props {
 // Eén regel uit de afsluiting van "Alle afstanden berekenen".
 interface BulkOutcome {
   courierName: string;
-  error?: string;      // de berekening mislukte
-  skipped?: string[];  // gelukt, maar apotheken zonder coördinaten overgeslagen
+  error?: string;        // de berekening mislukte
+  skipped?: string[];    // gelukt, maar apotheken zonder coördinaten overgeslagen
+  estimated?: string[];  // gelukt, maar Google gaf voor deze apotheken geen route
+  reason?: string | null;
+}
+
+// De apotheken waarvoor alleen een schatting kwam. Oranje en voluit, want een
+// schatting gaat net zo goed de vergoeding in als een route — alleen weet
+// niemand of hij klopt.
+function estimatedNames(run: DistanceRun): string[] {
+  return run.distances.filter((d) => d.source === 'fallback').map((d) => d.pharmacy_name);
 }
 
 // Beheerscherm voor de standplaats en de afstanden per koerier (migratie 018).
@@ -156,8 +165,14 @@ export default function CourierAddresses({ onClose }: Props) {
       setBulk({ at: i + 1, total: targets.length, current: h.courierName });
       try {
         const result = await computeDistances(h.courierId);
-        if (result.skipped.length > 0) {
-          outcomes.push({ courierName: h.courierName, skipped: result.skipped.map((s) => s.name) });
+        const estimated = estimatedNames(result);
+        if (result.skipped.length > 0 || estimated.length > 0) {
+          outcomes.push({
+            courierName: h.courierName,
+            skipped: result.skipped.length > 0 ? result.skipped.map((s) => s.name) : undefined,
+            estimated: estimated.length > 0 ? estimated : undefined,
+            reason: result.routeError,
+          });
         }
       } catch (e: any) {
         outcomes.push({ courierName: h.courierName, error: e?.message ?? 'Berekenen mislukt.' });
@@ -193,7 +208,8 @@ export default function CourierAddresses({ onClose }: Props) {
   }
 
   const failed = bulkOutcome?.outcomes.filter((o) => o.error) ?? [];
-  const partial = bulkOutcome?.outcomes.filter((o) => !o.error) ?? [];
+  const estimatedOut = bulkOutcome?.outcomes.filter((o) => o.estimated) ?? [];
+  const skippedOut = bulkOutcome?.outcomes.filter((o) => o.skipped) ?? [];
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -233,17 +249,28 @@ export default function CourierAddresses({ onClose }: Props) {
 
           {bulkOutcome && (
             <div className={`rounded-lg border text-sm p-3 space-y-1 ${
-              failed.length > 0 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+              failed.length > 0 || estimatedOut.length > 0
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-green-50 border-green-200 text-green-800'}`}>
               <p className="font-medium inline-flex items-center gap-1">
-                {failed.length === 0 && <Check size={15} />}
+                {failed.length === 0 && estimatedOut.length === 0 && <Check size={15} />}
                 {bulkOutcome.total - failed.length} van {bulkOutcome.total} koeriers berekend
                 {failed.length > 0 && `, bij ${failed.length} ging het mis`}
+                {estimatedOut.length > 0 && `, bij ${estimatedOut.length} alleen geschat`}
               </p>
               {failed.map((o) => (
-                <p key={o.courierName}><strong>{o.courierName}</strong>: {o.error}</p>
+                <p key={`f-${o.courierName}`}><strong>{o.courierName}</strong>: {o.error}</p>
               ))}
-              {partial.map((o) => (
-                <p key={o.courierName} className="text-amber-700">
+              {estimatedOut.map((o) => (
+                <div key={`e-${o.courierName}`} className="text-orange-700">
+                  <p>
+                    <strong>{o.courierName}</strong>: {FALLBACK_TEXT} — {o.estimated!.join(', ')}
+                  </p>
+                  {o.reason && <p className="text-xs">Reden van Google: {o.reason}</p>}
+                </div>
+              ))}
+              {skippedOut.map((o) => (
+                <p key={`s-${o.courierName}`} className="text-amber-700">
                   <strong>{o.courierName}</strong>: overgeslagen omdat de apotheek geen coördinaten heeft —{' '}
                   {o.skipped!.join(', ')}
                 </p>
@@ -334,8 +361,23 @@ export default function CourierAddresses({ onClose }: Props) {
                         <div className="text-sm">
                           <p className="inline-flex items-center gap-1 text-green-700 font-medium">
                             <Check size={15} /> {run.distances.length} afstand{run.distances.length === 1 ? '' : 'en'} bijgewerkt
-                            {run.fallbacks > 0 && `, waarvan ${run.fallbacks} geschat`}
                           </p>
+                          {/* Een schatting telt net zo goed mee in de vergoeding.
+                              Vroeger stond hier "waarvan 3 geschat" in groen, en
+                              zag niemand dat élke afstand een schatting was. */}
+                          {run.fallbacks > 0 && (
+                            <div className="mt-1 rounded-lg bg-orange-50 border border-orange-200 text-orange-800 p-2">
+                              <p>
+                                <strong>
+                                  {run.fallbacks === run.distances.length ? 'Alle afstanden' : `${run.fallbacks} van ${run.distances.length} afstanden`}
+                                </strong>{' '}
+                                {FALLBACK_TEXT}: {estimatedNames(run).join(', ')}.
+                              </p>
+                              {run.routeError && (
+                                <p className="text-xs mt-0.5">Reden van Google: {run.routeError}</p>
+                              )}
+                            </div>
+                          )}
                           {run.skipped.length > 0 && (
                             <p className="text-amber-700 mt-1">
                               Overgeslagen (apotheek zonder coördinaten):{' '}
@@ -352,17 +394,25 @@ export default function CourierAddresses({ onClose }: Props) {
                             {existing
                               .slice()
                               .sort((a, b) => (pharmacyName.get(a.pharmacyId) ?? '').localeCompare(pharmacyName.get(b.pharmacyId) ?? '', 'nl'))
-                              .map((d) => (
-                                <tr key={d.pharmacyId}>
-                                  <td className="py-1 pr-2">{pharmacyName.get(d.pharmacyId) ?? d.pharmacyId}</td>
-                                  <td className="py-1 px-2 text-right tabular-nums">
-                                    {d.distanceKm.toFixed(1).replace('.', ',')} km
-                                  </td>
-                                  <td className="py-1 pl-2 text-xs text-slate-500 w-24">
-                                    {SOURCE_LABELS[d.source] ?? d.source}
-                                  </td>
-                                </tr>
-                              ))}
+                              .map((d) => {
+                                // Ook in de vaste lijst: een geschatte afstand van
+                                // weken terug is net zo verdacht als een van nu.
+                                const estimated = d.source === 'fallback';
+                                return (
+                                  <tr key={d.pharmacyId} className={estimated ? 'text-orange-700' : ''}>
+                                    <td className="py-1 pr-2">{pharmacyName.get(d.pharmacyId) ?? d.pharmacyId}</td>
+                                    <td className="py-1 px-2 text-right tabular-nums">
+                                      {d.distanceKm.toFixed(1).replace('.', ',')} km
+                                    </td>
+                                    <td
+                                      className={`py-1 pl-2 text-xs w-24 ${estimated ? 'font-medium' : 'text-slate-500'}`}
+                                      title={estimated ? FALLBACK_TEXT : undefined}
+                                    >
+                                      {SOURCE_LABELS[d.source] ?? d.source}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                           </tbody>
                         </table>
                       )}

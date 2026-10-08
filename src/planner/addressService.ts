@@ -96,6 +96,10 @@ export interface DistanceRun {
   distances: DistanceResult[];
   fallbacks: number;
   skipped: { id: string; name: string; reason: string }[];
+  // De reden van Google als de routeberekening voor de hele aanvraag mislukte —
+  // bijvoorbeeld een sleutel zonder Routes API. Tot oktober 2026 kwam die nergens
+  // terug, en werd elke afstand ongemerkt een schatting.
+  routeError: string | null;
 }
 
 // Adres → afstanden. De Edge Function controleert zelf of de aanroeper planner
@@ -130,11 +134,16 @@ export async function computeDistances(courierId: string, address?: string): Pro
     distances: body?.distances ?? [],
     fallbacks: body?.fallbacks ?? 0,
     skipped: body?.skipped ?? [],
+    routeError: body?.route_error ?? null,
   };
 }
 
 export const SOURCE_LABELS: Record<string, string> = {
   route:    'route',
-  fallback: 'schatting',
+  fallback: 'geschat',
   manual:   'handmatig',
 };
+
+// Wat een fallback is, voluit. Staat op één plek zodat de melding na een
+// berekening en de lijst met afstanden hetzelfde zeggen.
+export const FALLBACK_TEXT = 'geschat (hemelsbreed x 1,35), Google gaf geen route';

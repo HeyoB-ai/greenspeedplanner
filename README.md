@@ -852,6 +852,44 @@ Niet iedere medewerker heeft een personeelsnummer; koppel die op `employees.id`.
 > `scripts/backfill-pharmacy-coords.mjs`, en dat vergt eerst adresgegevens op de
 > apotheek zelf.
 
+### Hoe de afstand berekend wordt
+
+`courier-distances` zet het woonadres om in een punt met de **Geocoding API**, en
+berekent de rijafstand naar elke apotheek met de **Routes API**
+(`computeRouteMatrix`, `travelMode DRIVE`, `routingPreference TRAFFIC_UNAWARE`).
+Zonder verkeer, met opzet: met verkeer kiest Google bij file een andere route, en
+dan hangt de vergoeding af van het uur waarop iemand op *Berekenen* klikte.
+
+> **De legacy Distance Matrix API is voor nieuwe Google-projecten niet meer
+> beschikbaar.** Ons project is van mei 2026; tot oktober 2026 riep de functie die
+> oude API aan, kreeg `REQUEST_DENIED`, en viel daardoor bij **elke** afstand stil
+> terug op een schatting. De sleutel heeft nu de Geocoding API en de Routes API
+> nodig — allebei aangezet in het project én opgenomen in de API-beperkingen van
+> de sleutel.
+
+Lukt de route niet, dan wordt de afstand hemelsbreed × 1,35 (`source =
+'fallback'`). Dat gebeurt niet meer stil: het antwoord van de functie bevat de
+reden van Google (`route_error`), de functielog ook, en *Afstanden* toont elke
+geschatte afstand in oranje — *geschat (hemelsbreed x 1,35), Google gaf geen
+route* — na een berekening, na *Alle afstanden berekenen*, en in de lijst.
+
+**Het leidende getal komt uit de ANWB-routeplanner.** Volgens de cao is de afstand
+van de ANWB-routeplanner leidend; Heyo haalt het getal daar. De berekening hier
+is een hulpmiddel om de lijst snel te vullen en om afwijkingen te zien. Wijkt het
+ANWB-getal af, voer het dan handmatig in: het komt in `courier_distances` met
+`source = 'manual'`, zodat altijd te zien is welk getal niet uit een berekening
+komt.
+
+> ⚠ **Twee beperkingen bij handmatige getallen.**
+> * In *Afstanden* kan dat alleen voor een apotheek zonder coördinaten. Voor een
+>   apotheek waarvoor wél een route is berekend gaat het via SQL:
+>   `UPDATE public.courier_distances SET distance_km = <km>, source = 'manual',
+>   computed_at = now() WHERE courier_id = '<koerier>' AND pharmacy_id = '<apotheek>';`
+> * **Een herberekening overschrijft een handmatig getal.** De functie schrijft bij
+>   elke berekening alle apotheken van de koerier opnieuw, ook die met `source =
+>   'manual'`. Wie na het invoeren van ANWB-getallen op *Berekenen* of *Alle
+>   afstanden berekenen* klikt, is ze kwijt.
+
 ### Onkosten
 
 Naast de kilometervergoeding kan een koerier losse posten opgeven: parkeren, een
@@ -917,7 +955,7 @@ het verzenden gemaakt en bestaat verder alleen in de mail.
 |---|---|---|
 | `DECLARATION_URL` | `send-shift-mail` | basis-URL van de invulpagina, `https://planner.go-bob.nl/declaratie`. Ontbreekt hij, dan blijft een nabericht wachten in plaats van met een kapotte link uit te gaan |
 | `DECLARATION_ORIGIN` | `shift-declaration`, `extra-work`, `courier-distances` | CORS-origin; standaard `*` (er komen geen cookies of sessies aan te pas — het token in de URL is het hele bewijs). **Staat bewust nog op `*`**, zie hieronder |
-| `GOOGLE_MAPS_API_KEY` | `courier-distances` | geocoding + Distance Matrix; dezelfde sleutel als het backfill-script |
+| `GOOGLE_MAPS_API_KEY` | `courier-distances` | **Geocoding API** + **Routes API** (`computeRouteMatrix`); beide aan in het Google-project én in de API-beperkingen van de sleutel. De legacy Distance Matrix API is voor nieuwe projecten niet meer beschikbaar. Dezelfde sleutel als het backfill-script |
 
 ### Uitrollen
 
